@@ -77,7 +77,7 @@ func readConfig() (*config, error) {
 }
 
 func newBot(authToken string) *bot {
-	return &bot{authToken: ";jwt=" + authToken}
+	return &bot{authToken: authToken}
 }
 
 func (b *bot) setAddress(url string) error {
@@ -99,13 +99,12 @@ func (b *bot) connect() error {
 	header := http.Header{}
 	header.Add("Cookie", fmt.Sprintf("authtoken=%s", b.authToken))
 
-	conn, resp, err := websocket.DefaultDialer.Dial(fmt.Sprintf("wss://%s/ws", b.address), header)
+	conn, resp, err := websocket.DefaultDialer.Dial(b.address, header)
 	if err != nil {
 		return errors.New(fmt.Sprintf("handshake failed with status %v", resp))
 	}
 
 	b.conn = conn
-	// TODO: start listening
 
 	b.listen()
 
@@ -113,7 +112,6 @@ func (b *bot) connect() error {
 }
 
 func (b *bot) listen() {
-	fmt.Println("listening...")
 	for {
 		_, message, err := b.conn.ReadMessage()
 		if err != nil {
@@ -121,6 +119,7 @@ func (b *bot) listen() {
 		}
 
 		fmt.Println(string(message))
+
 		continue
 	}
 }

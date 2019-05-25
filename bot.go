@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -22,8 +23,14 @@ type bot struct {
 }
 
 type message struct {
-	Nick string `json:"nick"`
-	Data string `json:"data"`
+	Type     string `json:"type"`
+	Contents *contents
+}
+
+type contents struct {
+	Nick      string `json:"nick"`
+	Data      string `json:"data"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type config struct {
@@ -77,7 +84,7 @@ func readConfig() (*config, error) {
 }
 
 func newBot(authToken string) *bot {
-	return &bot{authToken: authToken}
+	return &bot{authToken: ";jwt=" + authToken}
 }
 
 func (b *bot) setAddress(url string) error {
@@ -118,7 +125,13 @@ func (b *bot) listen() {
 			log.Fatal(err)
 		}
 
-		fmt.Println(string(message))
+		m, err := parseMessage(message)
+		if err != nil {
+			log.Println("FAILED TO PARSE:", string(message))
+			continue
+		}
+
+		fmt.Printf("%+v\n", *m.Contents)
 
 		continue
 	}
@@ -143,4 +156,25 @@ func (b *bot) close() error {
 
 func init() {
 	flag.StringVar(&configFile, "config", "config.json", "location of config")
+}
+
+func parseMessage(msg []byte) (*message, error) {
+
+	received := string(msg)
+
+	m := new(message)
+
+	msgType := received[:strings.IndexByte(received, ' ')]
+
+	m.Type = msgType
+
+	m.Contents = after(received, len(m.Type))
+
+	return m, nil
+}
+
+func after(received string, length int) *contents {
+	contents := contents{}
+	json.Unmarshal([]byte(received[length:]), &contents)
+	return &contents
 }

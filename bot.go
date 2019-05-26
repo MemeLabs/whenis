@@ -125,13 +125,11 @@ func (b *bot) listen() {
 			log.Fatal(err)
 		}
 
-		m, err := parseMessage(message)
-		if err != nil {
-			log.Println("FAILED TO PARSE:", string(message))
-			continue
-		}
+		m := parseMessage(message)
 
-		fmt.Printf("%+v\n", *m.Contents)
+		if m.Contents != nil {
+			fmt.Printf("%+v\n", *m.Contents)
+		}
 
 		continue
 	}
@@ -154,11 +152,15 @@ func (b *bot) close() error {
 	return nil
 }
 
+func (b *bot) send() error {
+	return nil
+}
+
 func init() {
 	flag.StringVar(&configFile, "config", "config.json", "location of config")
 }
 
-func parseMessage(msg []byte) (*message, error) {
+func parseMessage(msg []byte) *message {
 
 	received := string(msg)
 
@@ -168,12 +170,18 @@ func parseMessage(msg []byte) (*message, error) {
 
 	m.Type = msgType
 
-	m.Contents = after(received, len(m.Type))
+	// if type is msg
+	if m.Type == "PRIVMSG" {
+		m.Contents = parseContents(received, len(m.Type))
 
-	return m, nil
+		// send
+
+	}
+
+	return m
 }
 
-func after(received string, length int) *contents {
+func parseContents(received string, length int) *contents {
 	contents := contents{}
 	json.Unmarshal([]byte(received[length:]), &contents)
 	return &contents

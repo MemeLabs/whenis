@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/jbpratt78/tmdb"
 )
 
 type bot struct {
@@ -20,6 +21,7 @@ type bot struct {
 	authToken string
 	address   string
 	conn      *websocket.Conn
+	client    *tmdb.Client
 }
 
 type message struct {
@@ -34,8 +36,9 @@ type contents struct {
 }
 
 type config struct {
-	AuthToken string `json:"auth_token"`
-	Address   string `json:"address"`
+	AuthToken  string `json:"auth_token"`
+	Address    string `json:"address"`
+	TmdbApiKey string `json:"tmdb_api_key"`
 }
 
 var configFile string
@@ -48,7 +51,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	bot := newBot(config.AuthToken)
+	bot := newBot(config)
 	if err = bot.setAddress(config.Address); err != nil {
 		log.Fatal(err)
 	}
@@ -83,8 +86,9 @@ func readConfig() (*config, error) {
 	return c, err
 }
 
-func newBot(authToken string) *bot {
-	return &bot{authToken: ";jwt=" + authToken}
+func newBot(config *config) *bot {
+	c := tmdb.New(config.TmdbApiKey)
+	return &bot{authToken: ";jwt=" + config.AuthToken, client: c}
 }
 
 func (b *bot) setAddress(url string) error {
@@ -124,13 +128,12 @@ func (b *bot) listen() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(string(message))
 		m := parseMessage(message)
 
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
 				fmt.Printf("%+v\n", *m.Contents)
-				err := b.send(m.Contents.Nick)
+				err := b.send(m.Contents)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -156,12 +159,32 @@ func (b *bot) close() error {
 	return nil
 }
 
-func (b *bot) send(username string) error {
+func (b *bot) send(contents *contents) error {
 	if b.conn == nil {
 		return errors.New("no connection available")
 	}
 
-	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "MiyanoBird"}`, username)))
+	query := strings.Fields(contents.Data)
+	var response string
+
+	if len(query) < 3 {
+		response = "not enough arguments supplied"
+	} else {
+		t := query[0]
+		switch {
+		case t == "search":
+			k := query[1]
+			if k == "movie" {
+				s, err := b.client.SearchMovie(query[2:])
+				if err != nil {
+					return err
+				}
+				response = handleMovieResults(s)
+			}
+		}
+	}
+
+	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, contents.Nick, response)))
 }
 
 func init() {
@@ -187,4 +210,12 @@ func parseContents(received string, length int) *contents {
 	contents := contents{}
 	json.Unmarshal([]byte(received[length:]), &contents)
 	return &contents
+}
+
+func handleMovieResults(result *tmdb.SearchMovieResult) string {
+	var out string
+	for _, r := range result.Results {
+		out += r.Title + " "
+	}
+	return out
 }

@@ -1,4 +1,5 @@
 {
   "auth_token": "",
-  "address": ""
+  "address": "",
+  "tmdb_api_key": ""
 }

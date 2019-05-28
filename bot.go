@@ -168,19 +168,29 @@ func (b *bot) send(contents *contents) error {
 	var response string
 
 	if len(query) < 3 {
-		response = "not enough arguments supplied"
+		response = "`ERROR: not enough args`"
 	} else {
 		t := query[0]
 		switch {
 		case t == "search":
 			k := query[1]
-			if k == "movie" {
+			switch {
+			case k == "movie":
 				s, err := b.client.SearchMovie(query[2:])
 				if err != nil {
 					return err
 				}
 				response = handleMovieResults(s)
+				fmt.Println("test ", s)
+			case k == "tv":
+			case k == "keyword":
+			case k == "people":
+			case k == "collection":
 			}
+		case t == "discover":
+		case t == "trending":
+		default:
+			response = "`ERROR: incorrect option`"
 		}
 	}
 

@@ -108,7 +108,7 @@ func (b *bot) connect() error {
 
 	conn, resp, err := websocket.DefaultDialer.Dial(b.address, header)
 	if err != nil {
-		return errors.New(fmt.Sprintf("handshake failed with status %v", resp))
+		return fmt.Errorf("handshake failed with status %v", resp)
 	}
 
 	b.conn = conn
@@ -124,14 +124,18 @@ func (b *bot) listen() {
 		if err != nil {
 			log.Fatal(err)
 		}
-
+		fmt.Println(string(message))
 		m := parseMessage(message)
 
 		if m.Contents != nil {
-			fmt.Printf("%+v\n", *m.Contents)
+			if m.Type == "PRIVMSG" {
+				fmt.Printf("%+v\n", *m.Contents)
+				err := b.send(m.Contents.Nick)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
 		}
-
-		continue
 	}
 }
 
@@ -152,8 +156,12 @@ func (b *bot) close() error {
 	return nil
 }
 
-func (b *bot) send() error {
-	return nil
+func (b *bot) send(username string) error {
+	if b.conn == nil {
+		return errors.New("no connection available")
+	}
+
+	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "MiyanoBird"}`, username)))
 }
 
 func init() {
@@ -170,13 +178,7 @@ func parseMessage(msg []byte) *message {
 
 	m.Type = msgType
 
-	// if type is msg
-	if m.Type == "PRIVMSG" {
-		m.Contents = parseContents(received, len(m.Type))
-
-		// send
-
-	}
+	m.Contents = parseContents(received, len(m.Type))
 
 	return m
 }

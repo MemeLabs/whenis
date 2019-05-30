@@ -125,6 +125,7 @@ func (b *bot) connect() error {
 func (b *bot) listen() {
 	for {
 		_, message, err := b.conn.ReadMessage()
+		fmt.Println(string(message))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -132,7 +133,7 @@ func (b *bot) listen() {
 
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
-				fmt.Printf("%+v\n", *m.Contents)
+				fmt.Println("Received", m.Contents)
 				err := b.send(m.Contents)
 				if err != nil {
 					fmt.Println(err)
@@ -168,7 +169,7 @@ func (b *bot) send(contents *contents) error {
 	var response string
 
 	if len(query) < 3 {
-		response = "`ERROR: not enough args`"
+		response = "MiyanoBird"
 	} else {
 		t := query[0]
 		switch {
@@ -180,12 +181,31 @@ func (b *bot) send(contents *contents) error {
 				if err != nil {
 					return err
 				}
-				response = handleMovieResults(s)
-				fmt.Println("test ", s)
+				response = handleMovieResult(s)
 			case k == "tv":
+				s, err := b.client.SearchTv(query[2:])
+				if err != nil {
+					return err
+				}
+				response = handleTvResult(s)
 			case k == "keyword":
-			case k == "people":
+				s, err := b.client.SearchKeyword(query[2:])
+				if err != nil {
+					return err
+				}
+				response = handleKeywordResult(s)
+			case k == "person":
+				s, err := b.client.SearchPerson(query[2:])
+				if err != nil {
+					return err
+				}
+				response = handlePersonResult(s)
 			case k == "collection":
+				s, err := b.client.SearchCollection(query[2:])
+				if err != nil {
+					return err
+				}
+				response = handleCollectionResult(s)
 			}
 		case t == "discover":
 		case t == "trending":
@@ -194,11 +214,8 @@ func (b *bot) send(contents *contents) error {
 		}
 	}
 
+	defer fmt.Println("message sent")
 	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, contents.Nick, response)))
-}
-
-func init() {
-	flag.StringVar(&configFile, "config", "config.json", "location of config")
 }
 
 func parseMessage(msg []byte) *message {
@@ -222,10 +239,35 @@ func parseContents(received string, length int) *contents {
 	return &contents
 }
 
-func handleMovieResults(result *tmdb.SearchMovieResult) string {
+func handleMovieResult(result *tmdb.SearchMovieResult) string {
 	var out string
+	fmt.Printf("%+v\n", result)
 	for _, r := range result.Results {
 		out += r.Title + " "
 	}
 	return out
+}
+
+func handleTvResult(result *tmdb.SearchTvResult) string {
+	fmt.Printf("%+v\n", result)
+	return ""
+}
+
+func handleKeywordResult(result *tmdb.SearchKeywordResult) string {
+	fmt.Printf("%+v\n", result)
+	return ""
+}
+
+func handlePersonResult(result *tmdb.SearchPersonResult) string {
+	fmt.Printf("%+v\n", result)
+	return ""
+}
+
+func handleCollectionResult(result *tmdb.SearchCollectionResult) string {
+	fmt.Printf("%+v\n", result)
+	return ""
+}
+
+func init() {
+	flag.StringVar(&configFile, "config", "config.json", "location of config")
 }

@@ -11,17 +11,21 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
+
+	"google.golang.org/api/calendar/v3"
 
 	"github.com/gorilla/websocket"
-	"github.com/jbpratt78/tmdb"
 )
 
 type bot struct {
-	mu        sync.Mutex
-	authToken string
-	address   string
-	conn      *websocket.Conn
-	client    *tmdb.Client
+	mu         sync.Mutex
+	authToken  string
+	address    string
+	conn       *websocket.Conn
+	cal        *calendar.Service
+	lastEmoji  int
+	lastPublic time.Time
 }
 
 type message struct {
@@ -36,12 +40,14 @@ type contents struct {
 }
 
 type config struct {
-	AuthToken  string `json:"auth_token"`
-	Address    string `json:"address"`
-	TmdbApiKey string `json:"tmdb_api_key"`
+	AuthToken            string `json:"auth_token"`
+	Address              string `json:"address"`
+	CalendarClientID     string `json:"calendar_client_ID"`
+	CalendarClientSecret string `json:"calendar_client_secret"`
 }
 
 var configFile string
+var emojis = [...]string{"🎬", "📺", "🍿", "📽️", "🎞", "🎥"}
 
 func main() {
 	flag.Parse()
@@ -55,6 +61,14 @@ func main() {
 	if err = bot.setAddress(config.Address); err != nil {
 		log.Fatal(err)
 	}
+
+	cal, err := getCalendar()
+	if err != nil {
+		log.Fatalf("Unable to get calendar: %v", err)
+	}
+	getCalendars(cal)
+	bot.cal = cal
+	bot.lastPublic = time.Now().AddDate(0, 0, -1)
 
 	err = bot.connect()
 	if err != nil {
@@ -87,8 +101,7 @@ func readConfig() (*config, error) {
 }
 
 func newBot(config *config) *bot {
-	c := tmdb.New(config.TmdbApiKey)
-	return &bot{authToken: ";jwt=" + config.AuthToken, client: c}
+	return &bot{authToken: ";jwt=" + config.AuthToken}
 }
 
 func (b *bot) setAddress(url string) error {
@@ -125,7 +138,6 @@ func (b *bot) connect() error {
 func (b *bot) listen() {
 	for {
 		_, message, err := b.conn.ReadMessage()
-		fmt.Println(string(message))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -134,7 +146,13 @@ func (b *bot) listen() {
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
 				fmt.Println("Received", m.Contents)
-				err := b.send(m.Contents)
+				err := b.send(m.Contents, true)
+				if err != nil {
+					fmt.Println(err)
+				}
+			} else if strings.Contains(m.Contents.Data, "whenis") {
+				fmt.Println("Received", m.Contents)
+				err := b.send(m.Contents, false)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -160,62 +178,48 @@ func (b *bot) close() error {
 	return nil
 }
 
-func (b *bot) send(contents *contents) error {
-	if b.conn == nil {
-		return errors.New("no connection available")
-	}
-
-	query := strings.Fields(contents.Data)
+func (b *bot) send(contents *contents, private bool) error {
 	var response string
+	searchText := contents.Data
+	searchText = strings.Replace(searchText, "whenis", "", -1)
+	searchText = strings.Trim(searchText, " ")
 
-	if len(query) < 3 {
-		response = "MiyanoBird"
+	events, err := searchString(b.cal, searchText, 1)
+	if err != nil {
+		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
+	}
+	if len(events.Items) == 0 {
+		response = "No upcoming events found."
 	} else {
-		t := query[0]
-		switch {
-		case t == "search":
-			k := query[1]
-			switch {
-			case k == "movie":
-				s, err := b.client.SearchMovie(query[2:])
-				if err != nil {
-					return err
-				}
-				response = handleMovieResult(s)
-			case k == "tv":
-				s, err := b.client.SearchTv(query[2:])
-				if err != nil {
-					return err
-				}
-				response = handleTvResult(s)
-			case k == "keyword":
-				s, err := b.client.SearchKeyword(query[2:])
-				if err != nil {
-					return err
-				}
-				response = handleKeywordResult(s)
-			case k == "person":
-				s, err := b.client.SearchPerson(query[2:])
-				if err != nil {
-					return err
-				}
-				response = handlePersonResult(s)
-			case k == "collection":
-				s, err := b.client.SearchCollection(query[2:])
-				if err != nil {
-					return err
-				}
-				response = handleCollectionResult(s)
+		for _, item := range events.Items {
+			date := item.Start.DateTime
+			t, _ := time.Parse(time.RFC3339, date)
+			if date == "" {
+				date = item.Start.Date
+				t, _ = time.Parse("2006-01-02", date)
 			}
-		case t == "discover":
-		case t == "trending":
-		default:
-			response = "`ERROR: incorrect option`"
+			diff := t.Sub(time.Now())
+			response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
 		}
 	}
 
-	defer fmt.Println("message sent")
-	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, contents.Nick, response)))
+	if b.conn == nil {
+		return errors.New("no connection available")
+	}
+	fmt.Println(response)
+	defer fmt.Println("===============================")
+	b.lastEmoji++
+	if b.lastEmoji >= len(emojis) {
+		b.lastEmoji = 0
+	}
+	diff := time.Now().Sub(b.lastPublic)
+	if diff.Minutes() >= 1 && !private {
+		fmt.Println("sending publicly")
+		b.lastPublic = time.Now()
+		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s %s"}`, emojis[b.lastEmoji], response)))
+	}
+
+	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s %s"}`, contents.Nick, emojis[b.lastEmoji], response)))
 }
 
 func parseMessage(msg []byte) *message {
@@ -239,33 +243,49 @@ func parseContents(received string, length int) *contents {
 	return &contents
 }
 
-func handleMovieResult(result *tmdb.SearchMovieResult) string {
-	var out string
-	fmt.Printf("%+v\n", result)
-	for _, r := range result.Results {
-		out += r.Title + " "
+func fmtDuration(d time.Duration) string {
+	fmt.Println(d)
+	d = d.Round(time.Minute)
+	h := d / time.Hour
+	hours := h % 24
+	days := (h - hours) / 24
+	d -= h * time.Hour
+	m := d / time.Minute
+	response := ""
+	if days > 0 {
+		dayString := "days"
+		sep := ","
+		if days == 1 {
+			dayString = "day"
+		}
+		if m == 0 || hours == 0 {
+			sep = "and"
+		}
+		if m == 0 && hours == 0 {
+			sep = ""
+		}
+		response += fmt.Sprintf("%d %v %v ", days, dayString, sep)
 	}
-	return out
-}
-
-func handleTvResult(result *tmdb.SearchTvResult) string {
-	fmt.Printf("%+v\n", result)
-	return ""
-}
-
-func handleKeywordResult(result *tmdb.SearchKeywordResult) string {
-	fmt.Printf("%+v\n", result)
-	return ""
-}
-
-func handlePersonResult(result *tmdb.SearchPersonResult) string {
-	fmt.Printf("%+v\n", result)
-	return ""
-}
-
-func handleCollectionResult(result *tmdb.SearchCollectionResult) string {
-	fmt.Printf("%+v\n", result)
-	return ""
+	if hours > 0 {
+		hourString := "hours"
+		sep := "and"
+		if hours == 1 {
+			hourString = "hour"
+		}
+		if m == 0 {
+			sep = ""
+		}
+		response += fmt.Sprintf("%d %v %v ", hours, hourString, sep)
+	}
+	if m > 0 {
+		minuteString := "minutes"
+		fmt.Println(m)
+		if m == 1 {
+			minuteString = "minute"
+		}
+		response += fmt.Sprintf("%d %v ", m, minuteString)
+	}
+	return response
 }
 
 func init() {

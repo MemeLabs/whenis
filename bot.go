@@ -184,6 +184,10 @@ func (b *bot) send(contents *contents, private bool) error {
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
 
+	if strings.ToLower(searchText) == "ligma" && !private {
+		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "ligma balls %s"}`, contents.Nick)))
+	}
+
 	events, err := searchString(b.cal, searchText, 1)
 	if err != nil {
 		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
@@ -199,7 +203,14 @@ func (b *bot) send(contents *contents, private bool) error {
 				t, _ = time.Parse("2006-01-02", date)
 			}
 			diff := t.Sub(time.Now())
-			response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
+			if diff.Round(time.Minute).Minutes() == 0 {
+				response = fmt.Sprintf("%v is starting now", item.Summary)
+			} else if diff.Minutes() < 0 {
+				diff *= -1
+				response = fmt.Sprintf("%v started %v ago", item.Summary, fmtDuration(diff))
+			} else {
+				response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
+			}
 		}
 	}
 
@@ -213,7 +224,7 @@ func (b *bot) send(contents *contents, private bool) error {
 		b.lastEmoji = 0
 	}
 	diff := time.Now().Sub(b.lastPublic)
-	if diff.Minutes() >= 1 && !private {
+	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
 		fmt.Println("sending publicly")
 		b.lastPublic = time.Now()
 		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s %s"}`, emojis[b.lastEmoji], response)))
@@ -244,7 +255,6 @@ func parseContents(received string, length int) *contents {
 }
 
 func fmtDuration(d time.Duration) string {
-	fmt.Println(d)
 	d = d.Round(time.Minute)
 	h := d / time.Hour
 	hours := h % 24
@@ -279,7 +289,6 @@ func fmtDuration(d time.Duration) string {
 	}
 	if m > 0 {
 		minuteString := "minutes"
-		fmt.Println(m)
 		if m == 1 {
 			minuteString = "minute"
 		}

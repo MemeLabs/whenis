@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -50,14 +51,15 @@ var configFile string
 var emojis = [...]string{"🎬", "📺", "🍿", "📽️", "🎞", "🎥"}
 
 func main() {
+	defer log.Println("terminating")
 	flag.Parse()
-	f, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
-	defer f.Close()
-
-	log.SetOutput(f)
+	defer logFile.Close()
+	mw := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(mw)
 
 	config, err := readConfig()
 	if err != nil {

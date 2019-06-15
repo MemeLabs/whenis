@@ -67,13 +67,17 @@ func main() {
 		log.Fatalf("Unable to get calendar: %v", err)
 	}
 	getCalendars(cal)
-	bot.cal = cal
-	bot.lastPublic = time.Now().AddDate(0, 0, -1)
+	for {
+		bot.cal = cal
+		bot.lastPublic = time.Now().AddDate(0, 0, -1)
 
-	err = bot.connect()
-	if err != nil {
+		err = bot.connect()
+		if err != nil {
+			fmt.Println(err)
+		}
 		bot.close()
-		log.Fatal(err)
+		time.Sleep(time.Second * 5)
+		log.Println("trying to reestablish connection")
 	}
 }
 
@@ -127,19 +131,22 @@ func (b *bot) connect() error {
 	if err != nil {
 		return fmt.Errorf("handshake failed with status %v", resp)
 	}
+	log.Println("Connection established.")
 
 	b.conn = conn
 
-	b.listen()
-
+	err = b.listen()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (b *bot) listen() {
+func (b *bot) listen() error {
 	for {
 		_, message, err := b.conn.ReadMessage()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		m := parseMessage(message)
 
@@ -190,7 +197,7 @@ func (b *bot) send(contents *contents, private bool) error {
 
 	events, err := searchString(b.cal, searchText, 1)
 	if err != nil {
-		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
+		return err
 	}
 	if len(events.Items) == 0 {
 		response = "No upcoming events found."
@@ -269,12 +276,12 @@ func fmtDuration(d time.Duration) string {
 			dayString = "day"
 		}
 		if m == 0 || hours == 0 {
-			sep = "and"
+			sep = " and"
 		}
 		if m == 0 && hours == 0 {
 			sep = ""
 		}
-		response += fmt.Sprintf("%d %v %v ", days, dayString, sep)
+		response += fmt.Sprintf("%d %v%v ", days, dayString, sep)
 	}
 	if hours > 0 {
 		hourString := "hours"

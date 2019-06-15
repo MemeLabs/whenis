@@ -51,6 +51,13 @@ var emojis = [...]string{"🎬", "📺", "🍿", "📽️", "🎞", "🎥"}
 
 func main() {
 	flag.Parse()
+	f, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer f.Close()
+
+	log.SetOutput(f)
 
 	config, err := readConfig()
 	if err != nil {
@@ -73,7 +80,7 @@ func main() {
 
 		err = bot.connect()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		}
 		bot.close()
 		time.Sleep(time.Second * 5)
@@ -129,7 +136,7 @@ func (b *bot) connect() error {
 
 	conn, resp, err := websocket.DefaultDialer.Dial(b.address, header)
 	if err != nil {
-		return fmt.Errorf("handshake failed with status %v", resp)
+		return fmt.Errorf("handshake failed with status: %v", resp)
 	}
 	log.Println("Connection established.")
 
@@ -146,22 +153,22 @@ func (b *bot) listen() error {
 	for {
 		_, message, err := b.conn.ReadMessage()
 		if err != nil {
-			return err
+			return fmt.Errorf("error trying to read message: %v", err)
 		}
 		m := parseMessage(message)
 
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
-				fmt.Println("Received", m.Contents)
+				log.Printf("Received: { %s: %s }", m.Contents.Nick, m.Contents.Data)
 				err := b.send(m.Contents, true)
 				if err != nil {
-					fmt.Println(err)
+					log.Println(err)
 				}
 			} else if strings.Contains(m.Contents.Data, "whenis") {
-				fmt.Println("Received", m.Contents)
+				log.Printf("Received: { %s: %s }", m.Contents.Nick, m.Contents.Data)
 				err := b.send(m.Contents, false)
 				if err != nil {
-					fmt.Println(err)
+					log.Println(err)
 				}
 			}
 		}
@@ -178,7 +185,7 @@ func (b *bot) close() error {
 
 	err := b.conn.Close()
 	if err != nil {
-		return err
+		return fmt.Errorf("error trying to close connection: %v", err)
 	}
 
 	b.conn = nil
@@ -224,19 +231,18 @@ func (b *bot) send(contents *contents, private bool) error {
 	if b.conn == nil {
 		return errors.New("no connection available")
 	}
-	fmt.Println(response)
-	defer fmt.Println("===============================")
+	defer log.Println("===============================")
 	b.lastEmoji++
 	if b.lastEmoji >= len(emojis) {
 		b.lastEmoji = 0
 	}
 	diff := time.Now().Sub(b.lastPublic)
 	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
-		fmt.Println("sending publicly")
+		log.Printf("sending public response: %s", response)
 		b.lastPublic = time.Now()
 		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s %s"}`, emojis[b.lastEmoji], response)))
 	}
-
+	log.Printf("sending private response: %s", response)
 	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s %s"}`, contents.Nick, emojis[b.lastEmoji], response)))
 }
 

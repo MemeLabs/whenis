@@ -1,5 +1,1 @@
-# personal bot for miscellaneous
-
-## Goals
-- [ ] PM for cat pictures
-- [ ] PM media title for imdb link
+get the credentials.json from here https://developers.google.com/calendar/quickstart/go

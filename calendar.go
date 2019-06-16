@@ -85,7 +85,7 @@ func getNextEvents(srv *calendar.Service) (*calendar.Event, error) {
 			return nil, err
 		}
 		for _, item := range e.Items {
-			t := getEventStartTime(item)
+			t := eventStartTime(item)
 			if t.Before(startTime) && t.After(now) {
 				event = item
 				startTime = t
@@ -111,7 +111,7 @@ func getOngoingEvents(srv *calendar.Service) ([]*calendar.Event, error) {
 			return nil, err
 		}
 		for _, item := range e.Items {
-			t := getEventEndTime(item)
+			t := eventEndTime(item)
 			if t.After(now) {
 				events = append(events, item)
 			}

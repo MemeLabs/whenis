@@ -154,6 +154,7 @@ func (b *bot) connect() error {
 
 func (b *bot) listen() error {
 	for {
+		var err error
 		_, message, err := b.conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("error trying to read message: %v", err)
@@ -162,17 +163,12 @@ func (b *bot) listen() error {
 
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
-				log.Printf("Received: %s { %s: %s }", m.Type, m.Contents.Nick, m.Contents.Data)
-				err := b.send(m.Contents, true)
-				if err != nil {
-					log.Println(err)
-				}
+				err = b.answer(m.Contents, true)
 			} else if strings.Contains(m.Contents.Data, "whenis") {
-				log.Printf("Received: %s { %s: %s }", m.Type, m.Contents.Nick, m.Contents.Data)
-				err := b.send(m.Contents, false)
-				if err != nil {
-					log.Println(err)
-				}
+				err = b.answer(m.Contents, false)
+			}
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -195,30 +191,35 @@ func (b *bot) close() error {
 	return nil
 }
 
-func (b *bot) send(contents *contents, private bool) error {
+func (b *bot) answer(contents *contents, private bool) error {
 	defer log.Println("===========================================================")
+	prvt := "public"
+	if private {
+		prvt = "private"
+	}
+	log.Printf("received %s request from [%s]: \"%s\"", prvt, contents.Nick, contents.Data)
 	searchText := contents.Data
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
 
 	if strings.Contains(searchText, "--next") || searchText == "" {
-		return doNextEvent(b, private, contents.Nick)
+		return b.replyNextEvent(private, contents.Nick)
 	} else if strings.Contains(searchText, "--multi") {
 		log.Println("multi mode")
-		return doMultiSearch(searchText, b, contents.Nick)
+		return b.replyMultiSearch(searchText, contents.Nick)
 	} else if strings.Contains(searchText, "help") {
-		return sendHelp(b, contents.Nick)
+		return b.replyHelp(contents.Nick)
 	} else if strings.Contains(searchText, "--ongoing") {
-		return doOngoing(b,private, contents.Nick) 
+		return b.replyOngoingEvents(private, contents.Nick)
 	}
-	return doSingleSearch(searchText, b, private, contents.Nick)
+	return b.replySingleSearch(searchText, private, contents.Nick)
 }
 
-func getTimeDiff(e *calendar.Event) time.Duration {
-	return getEventStartTime(e).Sub(time.Now())
+func timeDiff(e *calendar.Event) time.Duration {
+	return eventStartTime(e).Sub(time.Now())
 }
 
-func getEventStartTime(e *calendar.Event) time.Time {
+func eventStartTime(e *calendar.Event) time.Time {
 	date := e.Start.DateTime
 	t, _ := time.Parse(time.RFC3339, date)
 	if date == "" {
@@ -228,7 +229,7 @@ func getEventStartTime(e *calendar.Event) time.Time {
 	return t
 }
 
-func getEventEndTime(e *calendar.Event) time.Time {
+func eventEndTime(e *calendar.Event) time.Time {
 	date := e.End.DateTime
 	t, _ := time.Parse(time.RFC3339, date)
 	if date == "" {
@@ -313,18 +314,18 @@ func init() {
 	flag.StringVar(&configFile, "config", "config.json", "location of config")
 }
 
-func multiSend(messages []string, nick string, b *bot) error {
+func (b *bot) multiSendMsg(messages []string, nick string) error {
 	for _, message := range messages {
-		err := sendMsg(message, true, nick, b)
+		err := b.sendMsg(message, true, nick)
 		if err != nil {
 			return err
 		}
-		time.Sleep(time.Millisecond * 750)
+		time.Sleep(time.Millisecond * 500)
 	}
 	return nil
 }
 
-func sendMsg(message string, private bool, nick string, b *bot) error {
+func (b *bot) sendMsg(message string, private bool, nick string) error {
 	if private {
 		log.Printf("sending private response: %s", message)
 		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, message)))
@@ -340,7 +341,7 @@ func sendMsg(message string, private bool, nick string, b *bot) error {
 	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s"}`, message)))
 }
 
-func doSingleSearch(search string, b *bot, private bool, nick string) error {
+func (b *bot) replySingleSearch(search string, private bool, nick string) error {
 	var response string
 	var events []*calendar.Event
 	eList, err := searchString(b.cal, search, 1)
@@ -357,13 +358,13 @@ func doSingleSearch(search string, b *bot, private bool, nick string) error {
 		response = "No upcoming events found."
 	} else {
 		event := events[0]
-		response = generateResponse(getTimeDiff(event), event)
+		response = generateResponse(timeDiff(event), event)
 	}
 
-	return handleSingleMsg(b, private, response, nick)
+	return b.sendSingleMsg(private, response, nick)
 }
 
-func doNextEvent(b *bot, private bool, nick string) error {
+func (b *bot) replyNextEvent(private bool, nick string) error {
 	var response string
 	event, err := getNextEvents(b.cal)
 	if err != nil {
@@ -372,12 +373,12 @@ func doNextEvent(b *bot, private bool, nick string) error {
 	if event == nil {
 		response = "No upcoming events found."
 	} else {
-		response = generateResponse(getTimeDiff(event), event)
+		response = generateResponse(timeDiff(event), event)
 	}
-	return handleSingleMsg(b, private, response, nick)
+	return b.sendSingleMsg(private, response, nick)
 }
 
-func handleSingleMsg(b *bot, private bool, response string, nick string) error {
+func (b *bot) sendSingleMsg(private bool, response string, nick string) error {
 	diff := time.Now().Sub(b.lastPublic)
 	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
 		// TODO: need mutex here
@@ -385,12 +386,12 @@ func handleSingleMsg(b *bot, private bool, response string, nick string) error {
 		if b.lastEmoji >= len(emojis) {
 			b.lastEmoji = 0
 		}
-		return sendMsg(fmt.Sprintf("%s %s", emojis[b.lastEmoji], response), false, "", b)
+		return b.sendMsg(fmt.Sprintf("%s %s", emojis[b.lastEmoji], response), false, "")
 	}
-	return sendMsg(fmt.Sprintf("%s", response), true, nick, b)
+	return b.sendMsg(fmt.Sprintf("%s", response), true, nick)
 }
 
-func doMultiSearch(search string, b *bot, nick string) error {
+func (b *bot) replyMultiSearch(search string, nick string) error {
 	var responses []string
 	var i int
 	start := 0
@@ -404,12 +405,17 @@ func doMultiSearch(search string, b *bot, nick string) error {
 	start += 2
 	i, err := strconv.Atoi(split[start-1])
 	if err != nil {
+		if _, err := strconv.ParseFloat(split[start-1], 64); err == nil {
+			return b.sendMsg("WeirdChamp", true, nick)
+		}
 		start--
 		i = 5
 	} else if i > 15 {
 		i = 15
 	} else if i < 0 {
-		return sendMsg("nice one haHAA", true, nick, b)
+		return b.sendMsg("Don't be so negative haHAA", true, nick)
+	} else if i == 0 {
+		return b.sendMsg("Nice one haHAA", true, nick)
 	}
 	search = strings.Join(split[start:], " ")
 
@@ -419,18 +425,18 @@ func doMultiSearch(search string, b *bot, nick string) error {
 	}
 
 	if events == nil || len(events) == 0 {
-		return sendMsg("No upcoming events found.", true, nick, b)
+		return b.sendMsg("No upcoming events found.", true, nick)
 	}
 
 	for _, e := range events {
 		for _, event := range e.Items {
-			responses = append(responses, generateResponse(getTimeDiff(event), event))
+			responses = append(responses, generateResponse(timeDiff(event), event))
 		}
 	}
-	return multiSend(responses, nick, b)
+	return b.multiSendMsg(responses, nick)
 }
 
-func sendHelp(b *bot, nick string) error {
+func (b *bot) replyHelp(nick string) error {
 	responses := []string{
 		"`/msg whenis --help` to display this info",
 		"`/msg whenis Formula 1` to search for an event (in this case F1)",
@@ -439,24 +445,24 @@ func sendHelp(b *bot, nick string) error {
 		"`/msg whenis --ongoing` to show a list of all ongoing events",
 		"All of these also work in public chat, but some will only reply with private messages",
 	}
-	return multiSend(responses, nick, b)
+	return b.multiSendMsg(responses, nick)
 }
 
-func doOngoing(b *bot, private bool, nick string) error {
+func (b *bot) replyOngoingEvents(private bool, nick string) error {
 	var responses []string
 	events, err := getOngoingEvents(b.cal)
 	if err != nil {
 		return err
 	}
 	if events == nil || len(events) == 0 {
-		return sendMsg("No upcoming events found.", true, nick, b)
+		return b.sendMsg("No upcoming events found.", true, nick)
 	}
 	for _, event := range events {
-		responses = append(responses, generateResponse(getTimeDiff(event), event))
+		responses = append(responses, generateResponse(timeDiff(event), event))
 	}
 
 	if len(responses) == 1 {
-		return handleSingleMsg(b, private, responses[0], nick)
+		return b.sendSingleMsg(private, responses[0], nick)
 	}
-	return multiSend(responses, nick, b)
+	return b.multiSendMsg(responses, nick)
 }

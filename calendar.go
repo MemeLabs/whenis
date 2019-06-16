@@ -71,63 +71,101 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 func getNextEvents(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
-	var event *calendar.Event
+	type eventStr struct {
+		ev *calendar.Event
+		er error
+	}
+	eventc := make(chan eventStr)
+
+	var firstEvent *calendar.Event
+
+	counter := len(list.Items)
 	startTime := time.Now().AddDate(0, 0, 100)
 	now := time.Now()
-	t := time.Now().Format(time.RFC3339)
+	t := now.Format(time.RFC3339)
 	for _, item := range list.Items {
-		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
-		if err != nil {
-			return nil, err
-		}
-		for _, item := range e.Items {
-			t := eventStartTime(item)
-			if t.Before(startTime) && t.After(now) {
-				event = item
-				startTime = t
-				break
+		go func(itm *calendar.CalendarListEntry) {
+			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(1).OrderBy("startTime").Do()
+			if err != nil {
+				eventc <- eventStr{ev: nil, er: err}
 			}
+			eventc <- eventStr{ev: e.Items[0], er: nil}
+		}(item)
+	}
+	for i := 0; i < counter; i++ {
+		res := <-eventc
+		if res.er != nil {
+			return nil, res.er
+		}
+		t := eventStartTime(res.ev)
+		if t.Before(startTime) && t.After(now) {
+			firstEvent = res.ev
+			startTime = t
 		}
 	}
-	return event, nil
+	return firstEvent, nil
 }
 
 func getOngoingEvents(srv *calendar.Service, list *calendar.CalendarList) ([]*calendar.Event, error) {
-	var events []*calendar.Event
+	type chanContainer struct {
+		eventList *calendar.Events
+		er        error
+	}
+	var result []*calendar.Event
+	counter := len(list.Items)
+	eventc := make(chan chanContainer)
 	now := time.Now()
 	startTime := time.Now().AddDate(0, 0, -10).Format(time.RFC3339)
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
-		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMax(t).TimeMin(startTime).MaxResults(10).OrderBy("startTime").Do()
-		if err != nil {
-			return nil, err
+		go func(itm *calendar.CalendarListEntry) {
+			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMax(t).TimeMin(startTime).MaxResults(10).OrderBy("startTime").Do()
+			if err != nil {
+				eventc <- chanContainer{eventList: nil, er: err}
+			}
+			eventc <- chanContainer{eventList: e, er: nil}
+		}(item)
+	}
+	for i := 0; i < counter; i++ {
+		res := <-eventc
+		if res.er != nil {
+			return nil, res.er
 		}
-		for _, item := range e.Items {
+		for _, item := range res.eventList.Items {
 			t := eventEndTime(item)
 			if t.After(now) {
-				events = append(events, item)
+				result = append(result, item)
 			}
 		}
 	}
-	return events, nil
+	return result, nil
 }
 
-func searchString(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) ([]*calendar.Events, error) {
-	var events []*calendar.Events
+// Iterates through all calendars and return the first non empy list of results (that means it only returns results form one calendar!)
+func searchString(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) (*calendar.Events, error) {
+	type result struct {
+		eventList *calendar.Events
+		er        error
+	}
+	counter := len(list.Items)
+	eventc := make(chan result)
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
-		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Q(query).Do()
-		if err != nil {
-			return nil, err
-		}
-		if len(e.Items) > 0 {
-			events = append(events, e)
-		}
+		go func(itm *calendar.CalendarListEntry) {
+			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Q(query).Do()
+			if err != nil {
+				eventc <- result{eventList: nil, er: err}
+			}
+			eventc <- result{eventList: e, er: nil}
+		}(item)
 	}
-	if len(events) > int(amount) {
-		events = events[:int(amount)]
+	for {
+		res := <-eventc
+		if len(res.eventList.Items) > 0 || res.er != nil || counter == 1 {
+			return res.eventList, res.er
+		}
+		counter--
 	}
-	return events, nil
 }
 
 func getCalendars(srv *calendar.Service) (*calendar.CalendarList, error) {

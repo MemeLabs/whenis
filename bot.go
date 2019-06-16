@@ -373,10 +373,8 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 	if err != nil {
 		b.retriveCalendar(err)
 	}
-	for _, e := range eList {
-		for _, i := range e.Items {
-			events = append(events, i)
-		}
+	for _, event := range eList.Items {
+		events = append(events, event)
 	}
 
 	if len(events) == 0 {
@@ -449,14 +447,12 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 		b.retriveCalendar(err)
 	}
 
-	if events == nil || len(events) == 0 {
+	if events == nil || len(events.Items) == 0 {
 		return b.sendMsg("No upcoming events found.", true, nick)
 	}
 
-	for _, e := range events {
-		for _, event := range e.Items {
-			responses = append(responses, generateResponse(timeDiff(event), event))
-		}
+	for _, event := range events.Items {
+		responses = append(responses, generateResponse(timeDiff(event), event))
 	}
 	return b.multiSendMsg(responses, nick)
 }

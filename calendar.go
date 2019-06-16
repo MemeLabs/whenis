@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"golang.org/x/net/context"
@@ -70,7 +71,8 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func getNextEvents(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
+// maybe rundundant, could be replaced with searchString()
+func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
 	type eventStr struct {
 		ev *calendar.Event
 		er error
@@ -83,15 +85,14 @@ func getNextEvents(srv *calendar.Service, list *calendar.CalendarList) (*calenda
 	startTime := time.Now().AddDate(0, 0, 100)
 	now := time.Now()
 	t := now.Format(time.RFC3339)
+
 	for _, item := range list.Items {
 		go func(itm *calendar.CalendarListEntry) {
 			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(1).OrderBy("startTime").Do()
-			if err != nil {
-				eventc <- eventStr{ev: nil, er: err}
-			}
-			eventc <- eventStr{ev: e.Items[0], er: nil}
+			eventc <- eventStr{ev: e.Items[0], er: err}
 		}(item)
 	}
+
 	for i := 0; i < counter; i++ {
 		res := <-eventc
 		if res.er != nil {
@@ -119,11 +120,8 @@ func getOngoingEvents(srv *calendar.Service, list *calendar.CalendarList) ([]*ca
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
 		go func(itm *calendar.CalendarListEntry) {
-			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMax(t).TimeMin(startTime).MaxResults(10).OrderBy("startTime").Do()
-			if err != nil {
-				eventc <- chanContainer{eventList: nil, er: err}
-			}
-			eventc <- chanContainer{eventList: e, er: nil}
+			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMax(t).TimeMin(startTime).MaxResults(15).OrderBy("startTime").Do()
+			eventc <- chanContainer{eventList: e, er: err}
 		}(item)
 	}
 	for i := 0; i < counter; i++ {
@@ -141,12 +139,14 @@ func getOngoingEvents(srv *calendar.Service, list *calendar.CalendarList) ([]*ca
 	return result, nil
 }
 
-// Iterates through all calendars and return the first non empy list of results (that means it only returns results form one calendar!)
-func searchString(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) (*calendar.Events, error) {
+// returns a list of all events that are ongoing or happenign in the future, sorted by starting time
+func query(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) ([]*calendar.Event, error) {
 	type result struct {
 		eventList *calendar.Events
 		er        error
 	}
+	var finalList []*calendar.Event
+
 	counter := len(list.Items)
 	eventc := make(chan result)
 	t := time.Now().Format(time.RFC3339)
@@ -159,13 +159,18 @@ func searchString(srv *calendar.Service, list *calendar.CalendarList, query stri
 			eventc <- result{eventList: e, er: nil}
 		}(item)
 	}
-	for {
+	for i := 0; i < counter; i++ {
 		res := <-eventc
-		if len(res.eventList.Items) > 0 || res.er != nil || counter == 1 {
-			return res.eventList, res.er
+		if res.er != nil {
+			return nil, res.er
 		}
-		counter--
+		finalList = append(finalList, res.eventList.Items...)
 	}
+	sort.Slice(finalList, func(i, j int) bool { return eventStartTime(finalList[i]).Before(eventStartTime(finalList[j])) })
+	if len(finalList) > int(amount) {
+		finalList = finalList[:int(amount)]
+	}
+	return finalList, nil
 }
 
 func getCalendars(srv *calendar.Service) (*calendar.CalendarList, error) {

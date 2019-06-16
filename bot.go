@@ -228,7 +228,6 @@ func (b *bot) answer(contents *contents, private bool) error {
 	if strings.Contains(searchText, "--next") || searchText == "" {
 		return b.replyNextEvent(private, contents.Nick)
 	} else if strings.Contains(searchText, "--multi") {
-		log.Println("multi mode")
 		return b.replyMultiSearch(searchText, contents.Nick)
 	} else if strings.Contains(searchText, "help") {
 		return b.replyHelp(contents.Nick)
@@ -369,11 +368,11 @@ func (b *bot) sendMsg(message string, private bool, nick string) error {
 func (b *bot) replySingleSearch(search string, private bool, nick string) error {
 	var response string
 	var events []*calendar.Event
-	eList, err := searchString(b.cal, b.calList, search, 1)
+	eList, err := query(b.cal, b.calList, search, 1)
 	if err != nil {
 		b.retriveCalendar(err)
 	}
-	for _, event := range eList.Items {
+	for _, event := range eList {
 		events = append(events, event)
 	}
 
@@ -389,7 +388,7 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 
 func (b *bot) replyNextEvent(private bool, nick string) error {
 	var response string
-	event, err := getNextEvents(b.cal, b.calList)
+	event, err := getNextEvent(b.cal, b.calList)
 	if err != nil {
 		b.retriveCalendar(err)
 	}
@@ -442,16 +441,16 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 	}
 	search = strings.Join(split[start:], " ")
 
-	events, err := searchString(b.cal, b.calList, search, int64(i))
+	events, err := query(b.cal, b.calList, search, int64(i))
 	if err != nil {
 		b.retriveCalendar(err)
 	}
 
-	if events == nil || len(events.Items) == 0 {
+	if events == nil || len(events) == 0 {
 		return b.sendMsg("No upcoming events found.", true, nick)
 	}
 
-	for _, event := range events.Items {
+	for _, event := range events {
 		responses = append(responses, generateResponse(timeDiff(event), event))
 	}
 	return b.multiSendMsg(responses, nick)

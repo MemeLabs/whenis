@@ -72,13 +72,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cal, err := getCalendar()
-	if err != nil {
-		log.Fatalf("Unable to get calendar: %v", err)
-	}
-	getCalendars(cal)
 	for {
-		bot.cal = cal
+		bot.retriveCalendar(nil)
 		bot.lastPublic = time.Now().AddDate(0, 0, -1)
 
 		err = bot.connect()
@@ -201,6 +196,7 @@ func (b *bot) answer(contents *contents, private bool) error {
 	searchText := contents.Data
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
+	searchText = strings.ToLower(searchText)
 
 	if strings.Contains(searchText, "--next") || searchText == "" {
 		return b.replyNextEvent(private, contents.Nick)
@@ -211,6 +207,8 @@ func (b *bot) answer(contents *contents, private bool) error {
 		return b.replyHelp(contents.Nick)
 	} else if strings.Contains(searchText, "--ongoing") {
 		return b.replyOngoingEvents(private, contents.Nick)
+	} else if strings.Contains(searchText, "mrmouton going to") {
+		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
 	}
 	return b.replySingleSearch(searchText, private, contents.Nick)
 }
@@ -346,7 +344,7 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 	var events []*calendar.Event
 	eList, err := searchString(b.cal, search, 1)
 	if err != nil {
-		return err
+		b.retriveCalendar(err)
 	}
 	for _, e := range eList {
 		for _, i := range e.Items {
@@ -368,7 +366,7 @@ func (b *bot) replyNextEvent(private bool, nick string) error {
 	var response string
 	event, err := getNextEvents(b.cal)
 	if err != nil {
-		return err
+		b.retriveCalendar(err)
 	}
 	if event == nil {
 		response = "No upcoming events found."
@@ -421,7 +419,7 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 
 	events, err := searchString(b.cal, search, int64(i))
 	if err != nil {
-		return err
+		b.retriveCalendar(err)
 	}
 
 	if events == nil || len(events) == 0 {
@@ -452,7 +450,7 @@ func (b *bot) replyOngoingEvents(private bool, nick string) error {
 	var responses []string
 	events, err := getOngoingEvents(b.cal)
 	if err != nil {
-		return err
+		b.retriveCalendar(err)
 	}
 	if events == nil || len(events) == 0 {
 		return b.sendMsg("No upcoming events found.", true, nick)
@@ -465,4 +463,14 @@ func (b *bot) replyOngoingEvents(private bool, nick string) error {
 		return b.sendSingleMsg(private, responses[0], nick)
 	}
 	return b.multiSendMsg(responses, nick)
+}
+
+func (b *bot) retriveCalendar(err error) {
+	if err != nil {
+		log.Println(err)
+	}
+	b.cal, err = getCalendar()
+	if err != nil {
+		log.Fatalf("Unable to get calendar: %v", err)
+	}
 }

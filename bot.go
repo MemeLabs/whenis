@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -161,13 +162,13 @@ func (b *bot) listen() error {
 
 		if m.Contents != nil {
 			if m.Type == "PRIVMSG" {
-				log.Printf("Received: { %s: %s }", m.Contents.Nick, m.Contents.Data)
+				log.Printf("Received: %s { %s: %s }", m.Type, m.Contents.Nick, m.Contents.Data)
 				err := b.send(m.Contents, true)
 				if err != nil {
 					log.Println(err)
 				}
 			} else if strings.Contains(m.Contents.Data, "whenis") {
-				log.Printf("Received: { %s: %s }", m.Contents.Nick, m.Contents.Data)
+				log.Printf("Received: %s { %s: %s }", m.Type, m.Contents.Nick, m.Contents.Data)
 				err := b.send(m.Contents, false)
 				if err != nil {
 					log.Println(err)
@@ -195,71 +196,67 @@ func (b *bot) close() error {
 }
 
 func (b *bot) send(contents *contents, private bool) error {
-	var response string
+	defer log.Println("===========================================================")
 	searchText := contents.Data
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
 
-	if strings.ToLower(searchText) == "ligma" && !private {
-		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "ligma balls %s"}`, contents.Nick)))
+	if strings.Contains(searchText, "--next") || searchText == "" {
+		return doNextEvent(b, private, contents.Nick)
+	} else if strings.Contains(searchText, "--multi") {
+		log.Println("multi mode")
+		return doMultiSearch(searchText, b, contents.Nick)
+	} else if strings.Contains(searchText, "help") {
+		return sendHelp(b, contents.Nick)
+	} else if strings.Contains(searchText, "--ongoing") {
+		return doOngoing(b,private, contents.Nick) 
 	}
+	return doSingleSearch(searchText, b, private, contents.Nick)
+}
 
-	events, err := searchString(b.cal, searchText, 1)
-	if err != nil {
-		return err
+func getTimeDiff(e *calendar.Event) time.Duration {
+	return getEventStartTime(e).Sub(time.Now())
+}
+
+func getEventStartTime(e *calendar.Event) time.Time {
+	date := e.Start.DateTime
+	t, _ := time.Parse(time.RFC3339, date)
+	if date == "" {
+		date = e.Start.Date
+		t, _ = time.Parse("2006-01-02", date)
 	}
-	if len(events.Items) == 0 {
-		response = "No upcoming events found."
+	return t
+}
+
+func getEventEndTime(e *calendar.Event) time.Time {
+	date := e.End.DateTime
+	t, _ := time.Parse(time.RFC3339, date)
+	if date == "" {
+		date = e.End.Date
+		t, _ = time.Parse("2006-01-02", date)
+	}
+	return t
+}
+
+func generateResponse(diff time.Duration, item *calendar.Event) string {
+	var response string
+	if diff.Round(time.Minute).Minutes() == 0 {
+		response = fmt.Sprintf("%v is starting now", item.Summary)
+	} else if diff.Minutes() < 0 {
+		diff *= -1
+		response = fmt.Sprintf("%v started %v ago", item.Summary, fmtDuration(diff))
 	} else {
-		for _, item := range events.Items {
-			date := item.Start.DateTime
-			t, _ := time.Parse(time.RFC3339, date)
-			if date == "" {
-				date = item.Start.Date
-				t, _ = time.Parse("2006-01-02", date)
-			}
-			diff := t.Sub(time.Now())
-			if diff.Round(time.Minute).Minutes() == 0 {
-				response = fmt.Sprintf("%v is starting now", item.Summary)
-			} else if diff.Minutes() < 0 {
-				diff *= -1
-				response = fmt.Sprintf("%v started %v ago", item.Summary, fmtDuration(diff))
-			} else {
-				response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
-			}
-		}
+		response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
 	}
-
-	if b.conn == nil {
-		return errors.New("no connection available")
-	}
-	defer log.Println("===============================")
-	b.lastEmoji++
-	if b.lastEmoji >= len(emojis) {
-		b.lastEmoji = 0
-	}
-	diff := time.Now().Sub(b.lastPublic)
-	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
-		log.Printf("sending public response: %s", response)
-		b.lastPublic = time.Now()
-		return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s %s"}`, emojis[b.lastEmoji], response)))
-	}
-	log.Printf("sending private response: %s", response)
-	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s %s"}`, contents.Nick, emojis[b.lastEmoji], response)))
+	return response
 }
 
 func parseMessage(msg []byte) *message {
-
 	received := string(msg)
-
 	m := new(message)
-
 	msgType := received[:strings.IndexByte(received, ' ')]
-
 	m.Type = msgType
-
 	m.Contents = parseContents(received, len(m.Type))
-
 	return m
 }
 
@@ -314,4 +311,152 @@ func fmtDuration(d time.Duration) string {
 
 func init() {
 	flag.StringVar(&configFile, "config", "config.json", "location of config")
+}
+
+func multiSend(messages []string, nick string, b *bot) error {
+	for _, message := range messages {
+		err := sendMsg(message, true, nick, b)
+		if err != nil {
+			return err
+		}
+		time.Sleep(time.Millisecond * 750)
+	}
+	return nil
+}
+
+func sendMsg(message string, private bool, nick string, b *bot) error {
+	if private {
+		log.Printf("sending private response: %s", message)
+		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, message)))
+		if err != nil {
+			log.Printf(err.Error())
+		}
+		return err
+	}
+	// TODO: need mutex here
+	b.lastPublic = time.Now()
+	log.Printf("sending public response: %s", message)
+
+	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s"}`, message)))
+}
+
+func doSingleSearch(search string, b *bot, private bool, nick string) error {
+	var response string
+	var events []*calendar.Event
+	eList, err := searchString(b.cal, search, 1)
+	if err != nil {
+		return err
+	}
+	for _, e := range eList {
+		for _, i := range e.Items {
+			events = append(events, i)
+		}
+	}
+
+	if len(events) == 0 {
+		response = "No upcoming events found."
+	} else {
+		event := events[0]
+		response = generateResponse(getTimeDiff(event), event)
+	}
+
+	return handleSingleMsg(b, private, response, nick)
+}
+
+func doNextEvent(b *bot, private bool, nick string) error {
+	var response string
+	event, err := getNextEvents(b.cal)
+	if err != nil {
+		return err
+	}
+	if event == nil {
+		response = "No upcoming events found."
+	} else {
+		response = generateResponse(getTimeDiff(event), event)
+	}
+	return handleSingleMsg(b, private, response, nick)
+}
+
+func handleSingleMsg(b *bot, private bool, response string, nick string) error {
+	diff := time.Now().Sub(b.lastPublic)
+	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
+		// TODO: need mutex here
+		b.lastEmoji++
+		if b.lastEmoji >= len(emojis) {
+			b.lastEmoji = 0
+		}
+		return sendMsg(fmt.Sprintf("%s %s", emojis[b.lastEmoji], response), false, "", b)
+	}
+	return sendMsg(fmt.Sprintf("%s", response), true, nick, b)
+}
+
+func doMultiSearch(search string, b *bot, nick string) error {
+	var responses []string
+	var i int
+	start := 0
+	split := strings.Split(search, " ")
+	for j, s := range split {
+		if s == "--multi" {
+			start = j
+			break
+		}
+	}
+	start += 2
+	i, err := strconv.Atoi(split[start-1])
+	if err != nil {
+		start--
+		i = 5
+	} else if i > 15 {
+		i = 15
+	} else if i < 0 {
+		return sendMsg("nice one haHAA", true, nick, b)
+	}
+	search = strings.Join(split[start:], " ")
+
+	events, err := searchString(b.cal, search, int64(i))
+	if err != nil {
+		return err
+	}
+
+	if events == nil || len(events) == 0 {
+		return sendMsg("No upcoming events found.", true, nick, b)
+	}
+
+	for _, e := range events {
+		for _, event := range e.Items {
+			responses = append(responses, generateResponse(getTimeDiff(event), event))
+		}
+	}
+	return multiSend(responses, nick, b)
+}
+
+func sendHelp(b *bot, nick string) error {
+	responses := []string{
+		"`/msg whenis --help` to display this info",
+		"`/msg whenis Formula 1` to search for an event (in this case F1)",
+		"`/msg whenis --multi 5 Formula 1` to search for the next 5 F1 events",
+		"`/msg whenis --next` to show the next scheduled event",
+		"`/msg whenis --ongoing` to show a list of all ongoing events",
+		"All of these also work in public chat, but some will only reply with private messages",
+	}
+	return multiSend(responses, nick, b)
+}
+
+func doOngoing(b *bot, private bool, nick string) error {
+	var responses []string
+	events, err := getOngoingEvents(b.cal)
+	if err != nil {
+		return err
+	}
+	if events == nil || len(events) == 0 {
+		return sendMsg("No upcoming events found.", true, nick, b)
+	}
+	for _, event := range events {
+		responses = append(responses, generateResponse(getTimeDiff(event), event))
+	}
+
+	if len(responses) == 1 {
+		return handleSingleMsg(b, private, responses[0], nick)
+	}
+	return multiSend(responses, nick, b)
 }

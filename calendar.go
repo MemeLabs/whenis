@@ -70,21 +70,74 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func searchString(srv *calendar.Service, query string, amount int64) (*calendar.Events, error) {
-	var events *calendar.Events
+func getNextEvents(srv *calendar.Service) (*calendar.Event, error) {
+	var event *calendar.Event
+	startTime := time.Now().AddDate(0, 0, 100)
+	now := time.Now()
 	list, err := getCalendars(srv)
 	if err != nil {
 		return nil, err
 	}
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
-		events, err = srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Q(query).Do()
+		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
 		if err != nil {
 			return nil, err
 		}
-		if len(events.Items) > 0 {
-			return events, nil
+		for _, item := range e.Items {
+			t := getEventStartTime(item)
+			if t.Before(startTime) && t.After(now) {
+				event = item
+				startTime = t
+				break
+			}
 		}
+	}
+	return event, nil
+}
+
+func getOngoingEvents(srv *calendar.Service) ([]*calendar.Event, error) {
+	var events []*calendar.Event
+	now := time.Now()
+	list, err := getCalendars(srv)
+	if err != nil {
+		return nil, err
+	}
+	startTime := time.Now().AddDate(0, 0, -10).Format(time.RFC3339)
+	t := time.Now().Format(time.RFC3339)
+	for _, item := range list.Items {
+		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMax(t).TimeMin(startTime).MaxResults(10).OrderBy("startTime").Do()
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range e.Items {
+			t := getEventEndTime(item)
+			if t.After(now) {
+				events = append(events, item)
+			}
+		}
+	}
+	return events, nil
+}
+
+func searchString(srv *calendar.Service, query string, amount int64) ([]*calendar.Events, error) {
+	var events []*calendar.Events
+	list, err := getCalendars(srv)
+	if err != nil {
+		return nil, err
+	}
+	t := time.Now().Format(time.RFC3339)
+	for _, item := range list.Items {
+		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Q(query).Do()
+		if err != nil {
+			return nil, err
+		}
+		if len(e.Items) > 0 {
+			events = append(events, e)
+		}
+	}
+	if len(events) > int(amount) {
+		events = events[:int(amount)]
 	}
 	return events, nil
 }

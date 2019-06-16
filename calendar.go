@@ -173,6 +173,14 @@ func query(srv *calendar.Service, list *calendar.CalendarList, query string, amo
 	return finalList, nil
 }
 
+func queryPrimary(srv *calendar.Service, query string, amount int64) (*calendar.Event, error) {
+	e, err := srv.Events.List("primary").ShowDeleted(false).SingleEvents(true).MaxResults(amount).OrderBy("startTime").Q(query).Do()
+	if len(e.Items) < 1 {
+		return nil, err
+	}
+	return e.Items[0], err
+}
+
 func getCalendars(srv *calendar.Service) (*calendar.CalendarList, error) {
 	list, err := srv.CalendarList.List().Do()
 	if err != nil {
@@ -189,7 +197,7 @@ func getCalendar() (*calendar.Service, error) {
 	}
 
 	// If modifying these scopes, delete your previously saved token.json.
-	newConfig, err := google.ConfigFromJSON(b, calendar.CalendarReadonlyScope)
+	newConfig, err := google.ConfigFromJSON(b, calendar.CalendarScope)
 	if err != nil {
 		return nil, err
 	}
@@ -200,4 +208,35 @@ func getCalendar() (*calendar.Service, error) {
 		return nil, err
 	}
 	return srv, nil
+}
+
+func (b *bot) insertSession(title string, nick string, timeOffset time.Duration) error {
+	event := &calendar.Event{
+		Summary:     title,
+		Description: nick,
+		Start: &calendar.EventDateTime{
+			DateTime: time.Now().Format(time.RFC3339),
+		},
+		End: &calendar.EventDateTime{
+			DateTime: time.Now().Add(timeOffset).Format(time.RFC3339),
+		},
+	}
+	err := b.removeSession(nick)
+	if err != nil {
+		return err
+	}
+	log.Printf("Inserting session \"%v\" for [%v]", title, nick)
+	_, err = b.cal.Events.Insert("primary", event).Do()
+	return err
+}
+
+func (b *bot) removeSession(nick string) error {
+	log.Printf("removing session \"%v\"", nick)
+	result, err := queryPrimary(b.cal, nick, 1)
+	if err != nil {
+		return err
+	} else if result == nil {
+		return nil
+	}
+	return b.cal.Events.Delete("primary", result.Id).Do()
 }

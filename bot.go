@@ -223,18 +223,24 @@ func (b *bot) answer(contents *contents, private bool) error {
 	searchText := contents.Data
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
-	searchText = strings.ToLower(searchText)
+	lowerText := strings.ToLower(searchText)
 
-	if strings.Contains(searchText, "--next") || searchText == "" {
+	if strings.Contains(lowerText, "--next") || searchText == "" {
 		return b.replyNextEvent(private, contents.Nick)
-	} else if strings.Contains(searchText, "--multi") {
+	} else if strings.Contains(lowerText, "--multi") {
 		return b.replyMultiSearch(searchText, contents.Nick)
-	} else if strings.Contains(searchText, "help") {
+	} else if strings.Contains(lowerText, "help") {
 		return b.replyHelp(contents.Nick)
-	} else if strings.Contains(searchText, "--ongoing") {
+	} else if strings.Contains(lowerText, "--ongoing") {
 		return b.replyOngoingEvents(private, contents.Nick)
-	} else if strings.Contains(searchText, "mrmouton going to") {
+	} else if strings.Contains(lowerText, "mrmouton going to") {
 		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
+	} else if strings.Contains(lowerText, "--start") {
+		err := b.setEvent(searchText, contents.Nick)
+		if err != nil {
+			b.retriveCalendar(err)
+		}
+		return nil
 	}
 	return b.replySingleSearch(searchText, private, contents.Nick)
 }
@@ -463,6 +469,7 @@ func (b *bot) replyHelp(nick string) error {
 		"`/msg whenis --multi 5 Formula 1` to search for the next 5 F1 events",
 		"`/msg whenis --next` to show the next scheduled event",
 		"`/msg whenis --ongoing` to show a list of all ongoing events",
+		"`/msg whenis --start 20 Session Title` adds a session to the calendar with a duration of 20 minutes and the title 'Session Title' (abusing this will get you blacklisted)",
 		"All of these also work in public chat, but some will only reply with private messages",
 	}
 	return b.multiSendMsg(responses, nick)
@@ -495,4 +502,39 @@ func (b *bot) retriveCalendar(err error) {
 	if err != nil {
 		log.Fatalf("Unable to get calendar: %v", err)
 	}
+}
+
+func (b *bot) setEvent(input string, nick string) error {
+	duration := time.Minute * 120
+	var remainder string 
+	split := strings.Split(input, " ")
+	
+	if strings.ToLower(split[0]) != "--start" {
+		b.sendMsg("invalid syntax", true, nick)
+		return nil
+	}
+
+	if i, err := strconv.Atoi(split[1]); err == nil {
+		duration = time.Minute * time.Duration(int32(i))
+		if len(split) >= 3 {
+			remainder = strings.Join(split[2:], " ")
+		}
+	} else {
+		if len(split) >= 2 {
+			remainder = strings.Join(split[1:], " ")
+		}
+	}
+	
+	if duration.Minutes() >= 2880 || duration.Minutes() <= 0 {
+		b.sendMsg("PepoBan", true, nick)
+		return nil
+	}
+
+	err := b.insertSession(remainder, nick, duration)
+	if err == nil {
+		b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, nick)
+	} else {
+		b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, nick)
+	}
+	return err
 }

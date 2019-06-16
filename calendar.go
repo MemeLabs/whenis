@@ -70,14 +70,10 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func getNextEvents(srv *calendar.Service) (*calendar.Event, error) {
+func getNextEvents(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
 	var event *calendar.Event
 	startTime := time.Now().AddDate(0, 0, 100)
 	now := time.Now()
-	list, err := getCalendars(srv)
-	if err != nil {
-		return nil, err
-	}
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
 		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
@@ -96,13 +92,9 @@ func getNextEvents(srv *calendar.Service) (*calendar.Event, error) {
 	return event, nil
 }
 
-func getOngoingEvents(srv *calendar.Service) ([]*calendar.Event, error) {
+func getOngoingEvents(srv *calendar.Service, list *calendar.CalendarList) ([]*calendar.Event, error) {
 	var events []*calendar.Event
 	now := time.Now()
-	list, err := getCalendars(srv)
-	if err != nil {
-		return nil, err
-	}
 	startTime := time.Now().AddDate(0, 0, -10).Format(time.RFC3339)
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
@@ -120,12 +112,8 @@ func getOngoingEvents(srv *calendar.Service) ([]*calendar.Event, error) {
 	return events, nil
 }
 
-func searchString(srv *calendar.Service, query string, amount int64) ([]*calendar.Events, error) {
+func searchString(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) ([]*calendar.Events, error) {
 	var events []*calendar.Events
-	list, err := getCalendars(srv)
-	if err != nil {
-		return nil, err
-	}
 	t := time.Now().Format(time.RFC3339)
 	for _, item := range list.Items {
 		e, err := srv.Events.List(item.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Q(query).Do()

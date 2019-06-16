@@ -26,6 +26,7 @@ type bot struct {
 	address    string
 	conn       *websocket.Conn
 	cal        *calendar.Service
+	calList    *calendar.CalendarList
 	lastEmoji  int
 	lastPublic time.Time
 }
@@ -72,8 +73,23 @@ func main() {
 		log.Fatal(err)
 	}
 
+	ticker := time.NewTicker(5 * time.Minute)
+    go func() {
+        for range ticker.C {
+            bot.calList, err = getCalendars(bot.cal)
+			if err != nil {
+				log.Fatalf("Unable to get calendars: %v", err)
+			}
+        }
+    }()
+
 	for {
 		bot.retriveCalendar(nil)
+		bot.calList, err = getCalendars(bot.cal)
+		if err != nil {
+			log.Fatalf("Unable to get calendars: %v", err)
+		}
+
 		bot.lastPublic = time.Now().AddDate(0, 0, -1)
 
 		err = bot.connect()
@@ -156,7 +172,7 @@ func (b *bot) listen() error {
 				errc <- fmt.Errorf("error trying to read message: %v", err)
 			}
 			m := parseMessage(message)
-	
+
 			if m.Contents != nil {
 				if m.Type == "PRIVMSG" {
 					go func() {
@@ -176,7 +192,7 @@ func (b *bot) listen() error {
 			}
 		}
 	}()
-	err := <- errc
+	err := <-errc
 	return err
 }
 
@@ -353,7 +369,7 @@ func (b *bot) sendMsg(message string, private bool, nick string) error {
 func (b *bot) replySingleSearch(search string, private bool, nick string) error {
 	var response string
 	var events []*calendar.Event
-	eList, err := searchString(b.cal, search, 1)
+	eList, err := searchString(b.cal, b.calList, search, 1)
 	if err != nil {
 		b.retriveCalendar(err)
 	}
@@ -375,7 +391,7 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 
 func (b *bot) replyNextEvent(private bool, nick string) error {
 	var response string
-	event, err := getNextEvents(b.cal)
+	event, err := getNextEvents(b.cal, b.calList)
 	if err != nil {
 		b.retriveCalendar(err)
 	}
@@ -428,7 +444,7 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 	}
 	search = strings.Join(split[start:], " ")
 
-	events, err := searchString(b.cal, search, int64(i))
+	events, err := searchString(b.cal, b.calList, search, int64(i))
 	if err != nil {
 		b.retriveCalendar(err)
 	}
@@ -459,7 +475,7 @@ func (b *bot) replyHelp(nick string) error {
 
 func (b *bot) replyOngoingEvents(private bool, nick string) error {
 	var responses []string
-	events, err := getOngoingEvents(b.cal)
+	events, err := getOngoingEvents(b.cal, b.calList)
 	if err != nil {
 		b.retriveCalendar(err)
 	}

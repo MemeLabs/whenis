@@ -148,25 +148,36 @@ func (b *bot) connect() error {
 }
 
 func (b *bot) listen() error {
-	for {
-		var err error
-		_, message, err := b.conn.ReadMessage()
-		if err != nil {
-			return fmt.Errorf("error trying to read message: %v", err)
-		}
-		m := parseMessage(message)
-
-		if m.Contents != nil {
-			if m.Type == "PRIVMSG" {
-				err = b.answer(m.Contents, true)
-			} else if strings.Contains(m.Contents.Data, "whenis") {
-				err = b.answer(m.Contents, false)
-			}
+	errc := make(chan error)
+	go func() {
+		for {
+			_, message, err := b.conn.ReadMessage()
 			if err != nil {
-				return err
+				errc <- fmt.Errorf("error trying to read message: %v", err)
+			}
+			m := parseMessage(message)
+	
+			if m.Contents != nil {
+				if m.Type == "PRIVMSG" {
+					go func() {
+						err := b.answer(m.Contents, true)
+						if err != nil {
+							errc <- err
+						}
+					}()
+				} else if strings.Contains(m.Contents.Data, "whenis") {
+					go func() {
+						err := b.answer(m.Contents, false)
+						if err != nil {
+							errc <- err
+						}
+					}()
+				}
 			}
 		}
-	}
+	}()
+	err := <- errc
+	return err
 }
 
 func (b *bot) close() error {

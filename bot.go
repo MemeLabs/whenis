@@ -171,7 +171,11 @@ func (b *bot) listen() error {
 			if err != nil {
 				errc <- fmt.Errorf("error trying to read message: %v", err)
 			}
-			m := parseMessage(message)
+			m, err := parseMessage(message)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
 
 			if m.Contents != nil {
 				if m.Type == "PRIVMSG" {
@@ -282,13 +286,16 @@ func generateResponse(diff time.Duration, item *calendar.Event) string {
 	return response
 }
 
-func parseMessage(msg []byte) *message {
+func parseMessage(msg []byte) (*message, error) {
 	received := string(msg)
 	m := new(message)
-	msgType := received[:strings.IndexByte(received, ' ')]
-	m.Type = msgType
+	maxBound := strings.IndexByte(received, ' ')
+	if maxBound < 0 {
+		return nil, errors.New("couldn't parse message type.")
+	}
+	m.Type = received[:maxBound]
 	m.Contents = parseContents(received, len(m.Type))
-	return m
+	return m, nil
 }
 
 func parseContents(received string, length int) *contents {
@@ -357,7 +364,7 @@ func (b *bot) multiSendMsg(messages []string, nick string) error {
 
 func (b *bot) sendMsg(message string, private bool, nick string) error {
 	if private {
-		log.Printf("sending private response: %s", message)
+		log.Printf("sending private response: \"%s\"", message)
 		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, message)))
 		if err != nil {
 			log.Printf(err.Error())

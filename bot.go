@@ -72,33 +72,36 @@ func main() {
 	if err = bot.setAddress(config.Address); err != nil {
 		log.Fatal(err)
 	}
+	bot.retriveCalendar(nil)
+	bot.calList, err = getCalendars(bot.cal)
+	if err != nil {
+		log.Fatalf("Unable to get calendars: %v", err)
+	}
 
 	ticker := time.NewTicker(5 * time.Minute)
     go func() {
         for range ticker.C {
-            bot.calList, err = getCalendars(bot.cal)
+            cals, err := getCalendars(bot.cal)
 			if err != nil {
-				log.Fatalf("Unable to get calendars: %v", err)
+				log.Printf("Unable to get calendars: %v", err)
+				continue
 			}
+			bot.calList = cals
         }
     }()
 
 	for {
-		bot.retriveCalendar(nil)
-		bot.calList, err = getCalendars(bot.cal)
-		if err != nil {
-			log.Fatalf("Unable to get calendars: %v", err)
-		}
-
 		bot.lastPublic = time.Now().AddDate(0, 0, -1)
-
+		log.Println("trying to establish connection")
 		err = bot.connect()
 		if err != nil {
 			log.Println(err)
 		}
-		bot.close()
+		err = bot.close()
+		if err != nil {
+			log.Println(err)
+		}
 		time.Sleep(time.Second * 5)
-		log.Println("trying to reestablish connection")
 	}
 }
 
@@ -170,6 +173,7 @@ func (b *bot) listen() error {
 			_, message, err := b.conn.ReadMessage()
 			if err != nil {
 				errc <- fmt.Errorf("error trying to read message: %v", err)
+				return
 			}
 			m, err := parseMessage(message)
 			if err != nil {
@@ -183,6 +187,7 @@ func (b *bot) listen() error {
 						err := b.answer(m.Contents, true)
 						if err != nil {
 							errc <- err
+							return
 						}
 					}()
 				} else if strings.Contains(m.Contents.Data, "whenis") {
@@ -190,6 +195,7 @@ func (b *bot) listen() error {
 						err := b.answer(m.Contents, false)
 						if err != nil {
 							errc <- err
+							return
 						}
 					}()
 				}
@@ -240,11 +246,7 @@ func (b *bot) answer(contents *contents, private bool) error {
 	} else if strings.Contains(lowerText, "mrmouton going to") {
 		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
 	} else if strings.Contains(lowerText, "--start") {
-		err := b.setEvent(searchText, contents.Nick)
-		if err != nil {
-			b.retriveCalendar(err)
-		}
-		return nil
+		return b.setEvent(searchText, contents.Nick)
 	}
 	return b.replySingleSearch(searchText, private, contents.Nick)
 }
@@ -291,7 +293,7 @@ func parseMessage(msg []byte) (*message, error) {
 	m := new(message)
 	maxBound := strings.IndexByte(received, ' ')
 	if maxBound < 0 {
-		return nil, errors.New("couldn't parse message type.")
+		return nil, errors.New("couldn't parse message type")
 	}
 	m.Type = received[:maxBound]
 	m.Contents = parseContents(received, len(m.Type))
@@ -380,13 +382,10 @@ func (b *bot) sendMsg(message string, private bool, nick string) error {
 
 func (b *bot) replySingleSearch(search string, private bool, nick string) error {
 	var response string
-	var events []*calendar.Event
-	eList, err := query(b.cal, b.calList, search, 1)
+	events, err := query(b.cal, b.calList, search, 1)
 	if err != nil {
-		b.retriveCalendar(err)
-	}
-	for _, event := range eList {
-		events = append(events, event)
+		log.Printf("error searching for event: %v", err)
+		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
 	}
 
 	if len(events) == 0 {
@@ -403,7 +402,8 @@ func (b *bot) replyNextEvent(private bool, nick string) error {
 	var response string
 	event, err := getNextEvent(b.cal, b.calList)
 	if err != nil {
-		b.retriveCalendar(err)
+		log.Printf("error searching for event: %v", err)
+		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
 	}
 	if event == nil {
 		response = "No upcoming events found."
@@ -456,7 +456,8 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 
 	events, err := query(b.cal, b.calList, search, int64(i))
 	if err != nil {
-		b.retriveCalendar(err)
+		log.Printf("error searching for event: %v", err)
+		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
 	}
 
 	if events == nil || len(events) == 0 {
@@ -486,7 +487,8 @@ func (b *bot) replyOngoingEvents(private bool, nick string) error {
 	var responses []string
 	events, err := getOngoingEvents(b.cal, b.calList)
 	if err != nil {
-		b.retriveCalendar(err)
+		log.Printf("error searching for event: %v", err)
+		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
 	}
 	if events == nil || len(events) == 0 {
 		return b.sendMsg("No upcoming events found.", true, nick)
@@ -538,10 +540,8 @@ func (b *bot) setEvent(input string, nick string) error {
 	}
 
 	err := b.insertSession(remainder, nick, duration)
-	if err == nil {
-		b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, nick)
-	} else {
-		b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, nick)
+	if err != nil {
+		return b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, nick)
 	}
-	return err
+	return b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, nick)
 }

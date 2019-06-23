@@ -229,7 +229,7 @@ func (b *bot) answer(contents *contents, private bool) error {
 	if private {
 		prvt = "private"
 	}
-	log.Printf("received %s request from [%s]: \"%s\"", prvt, contents.Nick, contents.Data)
+	log.Printf("received %s request from [%s]: %q", prvt, contents.Nick, contents.Data)
 	searchText := contents.Data
 	searchText = strings.Replace(searchText, "whenis", "", -1)
 	searchText = strings.Trim(searchText, " ")
@@ -247,6 +247,8 @@ func (b *bot) answer(contents *contents, private bool) error {
 		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
 	} else if strings.Contains(lowerText, "--start") {
 		return b.setEvent(searchText, contents.Nick)
+	} else if strings.Contains(lowerText, "--calendars") {
+		return b.listCalendars(contents.Nick, private)
 	}
 	return b.replySingleSearch(searchText, private, contents.Nick)
 }
@@ -390,11 +392,19 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 	}
 
 	if len(events) == 0 {
-		response = "No upcoming events found."
-	} else {
-		event := events[0]
-		response = generateResponse(timeDiff(event), event)
+		ev, err := queryCalTitles(b.cal, b.calList, search, 1)
+		if err != nil {
+			log.Printf("error searching for event: %v", err)
+			return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+		}
+		if ev == nil || len(ev.Items) == 0 {
+			return b.sendSingleMsg(private, "No upcoming events found.", nick)
+		} else {
+			events = ev.Items
+		}
 	}
+	event := events[0]
+	response = generateResponse(timeDiff(event), event)
 
 	return b.sendSingleMsg(private, response, nick)
 }
@@ -479,6 +489,7 @@ func (b *bot) replyHelp(nick string) error {
 		"`/msg whenis --next` to show the next scheduled event",
 		"`/msg whenis --ongoing` to show a list of all ongoing events",
 		"`/msg whenis --start 20 Session Title` adds a session to the calendar with a duration of 20 minutes and the title 'Session Title' (abusing this will get you blacklisted)",
+		"`/msg whenis --calendars` to get a list of active calendars",
 		"All of these also work in public chat, but some will only reply with private messages",
 	}
 	return b.multiSendMsg(responses, nick)
@@ -545,4 +556,18 @@ func (b *bot) setEvent(input string, nick string) error {
 		return b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, nick)
 	}
 	return b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, nick)
+}
+
+func (b *bot) listCalendars(nick string, private bool) error {
+	var response string
+	for _, calendar := range b.calList.Items {
+		if !calendar.Primary {
+			if calendar.SummaryOverride != "" {
+				response += fmt.Sprintf(" `%s`", calendar.SummaryOverride)
+			} else {
+				response += fmt.Sprintf(" `%s`", calendar.Summary)
+			}
+		}
+	}
+	return b.sendMsg(response, private, nick)
 }

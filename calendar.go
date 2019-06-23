@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/net/context"
@@ -101,7 +102,6 @@ func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar
 		for _, event := range res.ev {
 			t := eventStartTime(event)
 			if t.Before(startTime) && t.After(now) {
-				fmt.Println("setting as new event")
 				firstEvent = event
 				startTime = t
 				break
@@ -175,6 +175,18 @@ func query(srv *calendar.Service, list *calendar.CalendarList, query string, amo
 		finalList = finalList[:int(amount)]
 	}
 	return finalList, nil
+}
+
+func queryCalTitles(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) (*calendar.Events, error) {
+	t := time.Now().Format(time.RFC3339)
+	for _, calendar := range list.Items {
+		if !calendar.Primary {
+			if strings.Contains(strings.ToLower(calendar.SummaryOverride), strings.ToLower(query)) || strings.Contains(strings.ToLower(calendar.Summary), strings.ToLower(query)) {
+				return srv.Events.List(calendar.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Do()
+			}
+		}
+	}
+	return nil, nil
 }
 
 func queryPrimary(srv *calendar.Service, query string, amount int64) (*calendar.Event, error) {

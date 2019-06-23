@@ -74,7 +74,7 @@ func saveToken(path string, token *oauth2.Token) {
 // maybe rundundant, could be replaced with searchString()
 func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
 	type eventStr struct {
-		ev *calendar.Event
+		ev []*calendar.Event
 		er error
 	}
 	eventc := make(chan eventStr)
@@ -88,8 +88,8 @@ func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar
 
 	for _, item := range list.Items {
 		go func(itm *calendar.CalendarListEntry) {
-			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(1).OrderBy("startTime").Do()
-			eventc <- eventStr{ev: e.Items[0], er: err}
+			e, err := srv.Events.List(itm.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(3).OrderBy("startTime").Do()
+			eventc <- eventStr{ev: e.Items, er: err}
 		}(item)
 	}
 
@@ -98,10 +98,14 @@ func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar
 		if res.er != nil {
 			return nil, res.er
 		}
-		t := eventStartTime(res.ev)
-		if t.Before(startTime) && t.After(now) {
-			firstEvent = res.ev
-			startTime = t
+		for _, event := range res.ev {
+			t := eventStartTime(event)
+			if t.Before(startTime) && t.After(now) {
+				fmt.Println("setting as new event")
+				firstEvent = event
+				startTime = t
+				break
+			}
 		}
 	}
 	return firstEvent, nil

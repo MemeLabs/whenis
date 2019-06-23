@@ -79,16 +79,16 @@ func main() {
 	}
 
 	ticker := time.NewTicker(5 * time.Minute)
-    go func() {
-        for range ticker.C {
-            cals, err := getCalendars(bot.cal)
+	go func() {
+		for range ticker.C {
+			cals, err := getCalendars(bot.cal)
 			if err != nil {
 				log.Printf("Unable to get calendars: %v", err)
 				continue
 			}
 			bot.calList = cals
-        }
-    }()
+		}
+	}()
 
 	for {
 		bot.lastPublic = time.Now().AddDate(0, 0, -1)
@@ -344,7 +344,7 @@ func fmtDuration(d time.Duration) string {
 		if m == 1 {
 			minuteString = "minute"
 		}
-		response += fmt.Sprintf("%d %v ", m, minuteString)
+		response += fmt.Sprintf("%d %v", m, minuteString)
 	}
 	return response
 }
@@ -367,7 +367,8 @@ func (b *bot) multiSendMsg(messages []string, nick string) error {
 func (b *bot) sendMsg(message string, private bool, nick string) error {
 	if private {
 		log.Printf("sending private response: \"%s\"", message)
-		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, message)))
+		// TODO: properly marshal message as json
+		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, strings.Replace(message, "\"", "\\\"", -1))))
 		if err != nil {
 			log.Printf(err.Error())
 		}
@@ -375,7 +376,7 @@ func (b *bot) sendMsg(message string, private bool, nick string) error {
 	}
 	// TODO: need mutex here
 	b.lastPublic = time.Now()
-	log.Printf("sending public response: %s", message)
+	log.Printf("sending public response: \"%s\"", message)
 
 	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s"}`, message)))
 }
@@ -515,9 +516,9 @@ func (b *bot) retriveCalendar(err error) {
 
 func (b *bot) setEvent(input string, nick string) error {
 	duration := time.Minute * 120
-	var remainder string 
+	var remainder string
 	split := strings.Split(input, " ")
-	
+
 	if strings.ToLower(split[0]) != "--start" {
 		b.sendMsg("invalid syntax", true, nick)
 		return nil
@@ -533,7 +534,7 @@ func (b *bot) setEvent(input string, nick string) error {
 			remainder = strings.Join(split[1:], " ")
 		}
 	}
-	
+
 	if duration.Minutes() >= 2880 || duration.Minutes() <= 0 {
 		b.sendMsg("PepoBan", true, nick)
 		return nil

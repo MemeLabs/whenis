@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -507,7 +508,9 @@ func (b *bot) replyOngoingEvents(private bool, nick string) error {
 		return b.sendMsg("No upcoming events found.", true, nick)
 	}
 	for _, event := range events {
-		responses = append(responses, generateResponse(timeDiff(event), event))
+		if !regexp.MustCompile(`Week [0-9]{1,2} of [0-9]{4}`).Match([]byte(event.Summary)) {
+			responses = append(responses, generateResponse(timeDiff(event), event))
+		}
 	}
 
 	if len(responses) == 1 {

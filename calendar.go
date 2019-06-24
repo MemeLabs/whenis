@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -106,7 +107,7 @@ func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar
 		}
 		for _, event := range res.ev {
 			t := eventStartTime(event)
-			if t.Before(startTime) && t.After(now) {
+			if t.Before(startTime) && t.After(now) && !regexp.MustCompile(`Week [0-9]{1,2} of [0-9]{4}`).Match([]byte(event.Summary)) {
 				firstEvent = event
 				startTime = t
 				break

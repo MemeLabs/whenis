@@ -367,10 +367,12 @@ func (b *bot) multiSendMsg(messages []string, nick string) error {
 }
 
 func (b *bot) sendMsg(message string, private bool, nick string) error {
+	cont := contents{Nick: nick, Data: message}
+	messageS, _ := json.Marshal(cont)
 	if private {
-		log.Printf("sending private response: \"%s\"", message)
+		log.Printf("sending private response: %q", message)
 		// TODO: properly marshal message as json
-		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG {"nick": "%s", "data": "%s"}`, nick, strings.Replace(message, "\"", "\\\"", -1))))
+		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG %s`, messageS)))
 		if err != nil {
 			log.Printf(err.Error())
 		}
@@ -378,9 +380,9 @@ func (b *bot) sendMsg(message string, private bool, nick string) error {
 	}
 	// TODO: need mutex here
 	b.lastPublic = time.Now()
-	log.Printf("sending public response: \"%s\"", message)
+	log.Printf("sending public response: %q", message)
 
-	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG {"data": "%s"}`, message)))
+	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG %s`, messageS)))
 }
 
 func (b *bot) replySingleSearch(search string, private bool, nick string) error {

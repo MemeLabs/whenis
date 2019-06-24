@@ -17,6 +17,11 @@ import (
 	"google.golang.org/api/calendar/v3"
 )
 
+type result struct {
+	eventList *calendar.Events
+	er        error
+}
+
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
@@ -145,10 +150,6 @@ func getOngoingEvents(srv *calendar.Service, list *calendar.CalendarList) ([]*ca
 
 // returns a list of all events that are ongoing or happenign in the future, sorted by starting time
 func query(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) ([]*calendar.Event, error) {
-	type result struct {
-		eventList *calendar.Events
-		er        error
-	}
 	var finalList []*calendar.Event
 
 	counter := len(list.Items)
@@ -178,12 +179,27 @@ func query(srv *calendar.Service, list *calendar.CalendarList, query string, amo
 }
 
 func queryCalTitles(srv *calendar.Service, list *calendar.CalendarList, query string, amount int64) (*calendar.Events, error) {
+	eventc := make(chan result)
 	t := time.Now().Format(time.RFC3339)
-	for _, calendar := range list.Items {
-		if !calendar.Primary {
-			if strings.Contains(strings.ToLower(calendar.SummaryOverride), strings.ToLower(query)) || strings.Contains(strings.ToLower(calendar.Summary), strings.ToLower(query)) {
-				return srv.Events.List(calendar.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Do()
+	counter := len(list.Items)
+	for _, cal := range list.Items {
+		go func(calendar *calendar.CalendarListEntry) {
+			if !calendar.Primary {
+				if strings.Contains(strings.ToLower(calendar.SummaryOverride), strings.ToLower(query)) || strings.Contains(strings.ToLower(calendar.Summary), strings.ToLower(query)) {
+					e, err := srv.Events.List(calendar.Id).ShowDeleted(false).SingleEvents(true).TimeMin(t).MaxResults(amount).OrderBy("startTime").Do()
+					eventc <- result{eventList: e, er: err}
+					return
+				}
 			}
+			eventc <- result{}
+		}(cal)
+	}
+	for i := 0; i < counter; i++ {
+		res := <-eventc
+		if res.er != nil {
+			return nil, res.er
+		} else if res.eventList != nil && len(res.eventList.Items) > 0 {
+			return res.eventList, nil
 		}
 	}
 	return nil, nil

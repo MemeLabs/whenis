@@ -399,9 +399,8 @@ func (b *bot) replySingleSearch(search string, private bool, nick string) error 
 		}
 		if ev == nil || len(ev.Items) == 0 {
 			return b.sendSingleMsg(private, "No upcoming events found.", nick)
-		} else {
-			events = ev.Items
 		}
+		events = ev.Items
 	}
 	event := events[0]
 	response = generateResponse(timeDiff(event), event)

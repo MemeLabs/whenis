@@ -1,0 +1,9 @@
+version: "3.2"
+
+services:
+  whenis:
+    container_name: whenis
+    build: .
+    restart: always
+    volumes:
+      - ./config/:/usr/bin/

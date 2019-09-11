@@ -246,6 +246,8 @@ func (b *bot) answer(contents *contents, private bool) error {
 		return b.replyOngoingEvents(private, contents.Nick)
 	} else if strings.Contains(lowerText, "mrmouton going to") {
 		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
+	} else if strings.Contains(lowerText, "this degerneracy going to stop") {
+		return b.sendSingleMsg(private, "once all the weebs are eradicated NoTears", contents.Nick)
 	} else if strings.Contains(lowerText, "--start") {
 		return b.setEvent(searchText, contents.Nick)
 	} else if strings.Contains(lowerText, "--calendars") {
@@ -428,7 +430,7 @@ func (b *bot) replyNextEvent(private bool, nick string) error {
 
 func (b *bot) sendSingleMsg(private bool, response string, nick string) error {
 	diff := time.Now().Sub(b.lastPublic)
-	if diff.Seconds() >= 30 && !private && response != "No upcoming events found." {
+	if diff.Seconds() >= 5 && !private && response != "No upcoming events found." {
 		// TODO: need mutex here
 		b.lastEmoji++
 		if b.lastEmoji >= len(emojis) {

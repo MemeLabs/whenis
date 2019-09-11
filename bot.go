@@ -355,7 +355,7 @@ func fmtDuration(d time.Duration) string {
 }
 
 func init() {
-	flag.StringVar(&configFile, "config", "config.json", "location of config")
+	flag.StringVar(&configFile, "config", "/config/config.json", "location of config")
 }
 
 func (b *bot) multiSendMsg(messages []string, nick string) error {

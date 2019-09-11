@@ -3,7 +3,7 @@ version: "3.2"
 services:
   whenis:
     container_name: whenis
-    build: .
+    image: whenis
     restart: always
     volumes:
-      - ./config/:/usr/bin/
+      - ./config/:/config/

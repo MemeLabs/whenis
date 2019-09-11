@@ -28,7 +28,7 @@ func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
 	// created automatically when the authorization flow completes for the first
 	// time.
-	tokFile := "/config/token.json"
+	tokFile := "./config/token.json"
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
@@ -224,7 +224,7 @@ func getCalendars(srv *calendar.Service) (*calendar.CalendarList, error) {
 }
 
 func getCalendar() (*calendar.Service, error) {
-	b, err := ioutil.ReadFile("/config/googleconfig.json")
+	b, err := ioutil.ReadFile("./config/googleconfig.json")
 	if err != nil {
 		return nil, err
 	}

@@ -6,5 +6,6 @@ RUN CGO_ENABLED=0 go build -o /whenis .
 
 FROM alpine:latest 
 WORKDIR /
+RUN apk add ca-certificates
 COPY --from=builder /whenis /whenis
 ENTRYPOINT ["/whenis"]

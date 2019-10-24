@@ -79,6 +79,7 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 // maybe rundundant, could be replaced with searchString()
+//noinspection GoNilness
 func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
 	type eventStr struct {
 		ev []*calendar.Event
@@ -208,10 +209,13 @@ func queryCalTitles(srv *calendar.Service, list *calendar.CalendarList, query st
 
 func queryPrimary(srv *calendar.Service, query string, amount int64) (*calendar.Event, error) {
 	e, err := srv.Events.List("primary").ShowDeleted(false).SingleEvents(true).MaxResults(amount).OrderBy("startTime").Q(query).Do()
-	if len(e.Items) < 1 {
+	if err != nil {
 		return nil, err
 	}
-	return e.Items[0], err
+	if len(e.Items) < 1 {
+		return nil, nil
+	}
+	return e.Items[0], nil
 }
 
 func getCalendars(srv *calendar.Service) (*calendar.CalendarList, error) {
@@ -268,7 +272,7 @@ func (b *bot) removeSession(nick string) error {
 	result, err := queryPrimary(b.cal, nick, 1)
 	if err != nil {
 		return err
-	} else if result == nil {
+	} else if result == nil{
 		return nil
 	}
 	return b.cal.Events.Delete("primary", result.Id).Do()

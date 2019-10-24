@@ -2,45 +2,37 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/MemeLabs/dggchat"
 	"google.golang.org/api/calendar/v3"
-
-	"github.com/gorilla/websocket"
 )
 
 type bot struct {
-	mu         sync.Mutex
-	authToken  string
-	address    string
-	conn       *websocket.Conn
-	cal        *calendar.Service
-	calList    *calendar.CalendarList
-	lastEmoji  int
-	lastPublic time.Time
+	failTimeout time.Duration
+	sgg         *dggchat.Session
+	lastCheck   time.Time
+	cal         *calendar.Service
+	calList     *calendar.CalendarList
+	emoteSwitch bool
+	lastPublicFail  time.Time
+	msgBuffer   chan msg
 }
 
-type message struct {
-	Type     string `json:"type"`
-	Contents *contents
-}
-
-type contents struct {
-	Nick      string `json:"nick"`
-	Data      string `json:"data"`
-	Timestamp int64  `json:"timestamp"`
+type msg struct {
+	message   string
+	private   bool
+	recipient dggchat.User
 }
 
 type config struct {
@@ -51,16 +43,15 @@ type config struct {
 }
 
 var configFile string
-var emojis = [...]string{"🎬", "📺", "🍿", "📽️", "🎞", "🎥"}
 
 func main() {
-	defer log.Println("terminating")
 	flag.Parse()
 	logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
 	defer logFile.Close()
+
 	mw := io.MultiWriter(os.Stdout, logFile)
 	log.SetOutput(mw)
 
@@ -70,40 +61,54 @@ func main() {
 	}
 
 	bot := newBot(config)
-	if err = bot.setAddress(config.Address); err != nil {
-		log.Fatal(err)
-	}
-	bot.retriveCalendar(nil)
-	bot.calList, err = getCalendars(bot.cal)
-	if err != nil {
-		log.Fatalf("Unable to get calendars: %v", err)
-	}
 
-	ticker := time.NewTicker(5 * time.Minute)
-	go func() {
-		for range ticker.C {
-			cals, err := getCalendars(bot.cal)
-			if err != nil {
-				log.Printf("Unable to get calendars: %v", err)
-				continue
-			}
-			bot.calList = cals
-		}
-	}()
+	log.Println("[INFO] trying to establish connection...")
+	err = bot.sgg.Open()
+	if err != nil {
+		log.Fatal("[FATAL]", err)
+	}
+	log.Println("[INFO] connected")
+
+	bot.sgg.AddPMHandler(bot.onPM)
+	bot.sgg.AddMessageHandler(bot.onMessage)
+	bot.sgg.AddErrorHandler(onError)
 
 	for {
-		bot.lastPublic = time.Now().AddDate(0, 0, -1)
-		log.Println("trying to establish connection")
-		err = bot.connect()
-		if err != nil {
-			log.Println(err)
+		msg := <-bot.msgBuffer
+		if msg.private {
+			err := bot.sgg.SendPrivateMessage(msg.recipient.Nick, msg.message)
+			if err != nil {
+				log.Printf("[ERROR] could not send private messate: %s", err)
+			}
+		} else {
+			emote := "PepoG"
+			if bot.emoteSwitch {
+				emote = "PepoG:wide"
+			}
+			bot.emoteSwitch = !bot.emoteSwitch
+			err := bot.sgg.SendMessage(fmt.Sprintf("%s %s", emote, msg.message))
+			if err != nil {
+				log.Printf("[ERROR] could not send message: %s", err)
+			}
 		}
-		err = bot.close()
-		if err != nil {
-			log.Println(err)
-		}
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Millisecond * 450)
 	}
+}
+
+func (b *bot) onPM(dm dggchat.PrivateMessage, s *dggchat.Session) {
+	m := dggchat.Message{Sender: dm.User, Timestamp: dm.Timestamp, Message: dm.Message}
+	b.answer(m, true)
+}
+
+func (b *bot) onMessage(m dggchat.Message, s *dggchat.Session) {
+	if strings.HasPrefix(strings.TrimSpace(m.Message), "whenis") {
+		b.answer(m, false)
+	}
+}
+
+//noinspection GoUnusedParameter
+func onError(e string, session *dggchat.Session) {
+	log.Printf("[ERROR] %s", e)
 }
 
 func readConfig() (*config, error) {
@@ -130,130 +135,66 @@ func readConfig() (*config, error) {
 }
 
 func newBot(config *config) *bot {
-	return &bot{authToken: ";jwt=" + config.AuthToken}
-}
-
-func (b *bot) setAddress(url string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if url == "" {
-		return errors.New("url address not supplied")
-	}
-
-	b.address = url
-	return nil
-}
-
-func (b *bot) connect() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	header := http.Header{}
-	header.Add("Cookie", fmt.Sprintf("authtoken=%s", b.authToken))
-
-	conn, resp, err := websocket.DefaultDialer.Dial(b.address, header)
+	var b bot
+	b.failTimeout = time.Second * 30
+	sgg, err := dggchat.New(";jwt=" + config.AuthToken)
 	if err != nil {
-		return fmt.Errorf("handshake failed with status: %v", resp)
+		log.Fatalf("Unable to get connect to chat: %v", err)
 	}
-	log.Println("Connection established.")
-
-	b.conn = conn
-
-	err = b.listen()
+	b.sgg = sgg
+	u, err := url.Parse(config.Address)
 	if err != nil {
-		return err
+		log.Fatalf("[ERROR] can't parse url %v", err)
 	}
-	return nil
+	b.sgg.SetURL(*u)
+	b.retrieveCalendar(nil)
+	b.calList, err = getCalendars(b.cal)
+	if err != nil {
+		log.Fatalf("Unable to get calendars: %v", err)
+	}
+	b.msgBuffer = make(chan msg, 100)
+	return &b
 }
 
-func (b *bot) listen() error {
-	errc := make(chan error)
-	go func() {
-		for {
-			_, message, err := b.conn.ReadMessage()
-			if err != nil {
-				errc <- fmt.Errorf("error trying to read message: %v", err)
-				return
-			}
-			m, err := parseMessage(message)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-
-			if m.Contents != nil {
-				if m.Type == "PRIVMSG" {
-					go func() {
-						err := b.answer(m.Contents, true)
-						if err != nil {
-							errc <- err
-							return
-						}
-					}()
-				} else if strings.Contains(m.Contents.Data, "whenis") {
-					go func() {
-						err := b.answer(m.Contents, false)
-						if err != nil {
-							errc <- err
-							return
-						}
-					}()
-				}
-			}
+func (b *bot) answer(message dggchat.Message, private bool) {
+	if time.Since(b.lastCheck).Minutes() > 5 {
+		cals, err := getCalendars(b.cal)
+		if err != nil {
+			log.Printf("Unable to get calendars: %v", err)
+		} else {
+			b.lastCheck = time.Now()
+			b.calList = cals
 		}
-	}()
-	err := <-errc
-	return err
-}
-
-func (b *bot) close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.conn == nil {
-		return errors.New("connection already closed")
 	}
 
-	err := b.conn.Close()
-	if err != nil {
-		return fmt.Errorf("error trying to close connection: %v", err)
-	}
-
-	b.conn = nil
-	return nil
-}
-
-func (b *bot) answer(contents *contents, private bool) error {
-	defer log.Println("===========================================================")
 	prvt := "public"
 	if private {
 		prvt = "private"
 	}
-	log.Printf("received %s request from [%s]: %q", prvt, contents.Nick, contents.Data)
-	searchText := contents.Data
-	searchText = strings.Replace(searchText, "whenis", "", -1)
-	searchText = strings.Trim(searchText, " ")
+	searchText := strings.TrimSpace(strings.Replace(message.Message, "whenis", "", -1))
 	lowerText := strings.ToLower(searchText)
+	log.Printf("[INFO] received %s request from [%s]: %q", prvt, message.Sender.Nick, searchText)
 
-	if strings.Contains(lowerText, "--next") || searchText == "" {
-		return b.replyNextEvent(private, contents.Nick)
-	} else if strings.Contains(lowerText, "--multi") {
-		return b.replyMultiSearch(searchText, contents.Nick)
+	if strings.Contains(lowerText, "-next") || searchText == "" {
+		b.replyNextEvent(private, message.Sender)
+		return
+	} else if strings.Contains(lowerText, "-multi") {
+		b.replyMultiSearch(searchText, message.Sender)
+		return
 	} else if strings.Contains(lowerText, "help") {
-		return b.replyHelp(contents.Nick)
-	} else if strings.Contains(lowerText, "--ongoing") {
-		return b.replyOngoingEvents(private, contents.Nick)
-	} else if strings.Contains(lowerText, "mrmouton going to") {
-		return b.sendSingleMsg(private, "never PepeLaugh", contents.Nick)
-	} else if strings.Contains(lowerText, "this degerneracy going to stop") {
-		return b.sendSingleMsg(private, "once all the weebs are eradicated NoTears", contents.Nick)
-	} else if strings.Contains(lowerText, "--start") {
-		return b.setEvent(searchText, contents.Nick)
-	} else if strings.Contains(lowerText, "--calendars") {
-		return b.listCalendars(contents.Nick, private)
+		b.replyHelp(message.Sender)
+		return
+	} else if strings.Contains(lowerText, "-ongoing") {
+		b.replyOngoingEvents(private, message.Sender)
+		return
+	} else if strings.Contains(lowerText, "-start") {
+		b.setEvent(searchText, message.Sender)
+		return
+	} else if strings.Contains(lowerText, "-calendars") {
+		b.listCalendars(message.Sender, private)
+		return
 	}
-	return b.replySingleSearch(searchText, private, contents.Nick)
+	b.replySingleSearch(searchText, private, message.Sender)
 }
 
 func timeDiff(e *calendar.Event) time.Duration {
@@ -291,24 +232,6 @@ func generateResponse(diff time.Duration, item *calendar.Event) string {
 		response = fmt.Sprintf("%v is in %v", item.Summary, fmtDuration(diff))
 	}
 	return response
-}
-
-func parseMessage(msg []byte) (*message, error) {
-	received := string(msg)
-	m := new(message)
-	maxBound := strings.IndexByte(received, ' ')
-	if maxBound < 0 {
-		return nil, errors.New("couldn't parse message type")
-	}
-	m.Type = received[:maxBound]
-	m.Contents = parseContents(received, len(m.Type))
-	return m, nil
-}
-
-func parseContents(received string, length int) *contents {
-	contents := contents{}
-	json.Unmarshal([]byte(received[length:]), &contents)
-	return &contents
 }
 
 func fmtDuration(d time.Duration) string {
@@ -358,96 +281,82 @@ func init() {
 	flag.StringVar(&configFile, "config", "./config/config.json", "location of config")
 }
 
-func (b *bot) multiSendMsg(messages []string, nick string) error {
+func (b *bot) multiSendMsg(messages []string, user dggchat.User) {
 	for _, message := range messages {
-		err := b.sendMsg(message, true, nick)
-		if err != nil {
-			return err
-		}
-		time.Sleep(time.Millisecond * 500)
+		b.sendMsg(message, true, user)
+
 	}
-	return nil
 }
 
-func (b *bot) sendMsg(message string, private bool, nick string) error {
-	cont := contents{Nick: nick, Data: message}
-	messageS, _ := json.Marshal(cont)
-	if private {
-		log.Printf("sending private response: %q", message)
-		// TODO: properly marshal message as json
-		err := b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`PRIVMSG %s`, messageS)))
-		if err != nil {
-			log.Printf(err.Error())
-		}
-		return err
-	}
-	// TODO: need mutex here
-	b.lastPublic = time.Now()
-	log.Printf("sending public response: %q", message)
+func (b *bot) sendMsg(message string, private bool, user dggchat.User) {
 
-	return b.conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`MSG %s`, messageS)))
+	var m msg
+	m.private = private
+	m.recipient = user
+	m.message = message
+
+	b.msgBuffer <- m
 }
 
-func (b *bot) replySingleSearch(search string, private bool, nick string) error {
+func (b *bot) replySingleSearch(search string, private bool, user dggchat.User) {
 	var response string
 	events, err := query(b.cal, b.calList, search, 1)
 	if err != nil {
 		log.Printf("error searching for event: %v", err)
-		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
+		return
 	}
 
 	if len(events) == 0 {
 		ev, err := queryCalTitles(b.cal, b.calList, search, 1)
 		if err != nil {
 			log.Printf("error searching for event: %v", err)
-			return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+			b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
+			return
 		}
 		if ev == nil || len(ev.Items) == 0 {
-			return b.sendSingleMsg(private, "No upcoming events found.", nick)
+			private = private || !b.canFailPublicly()
+			b.sendMsg(fmt.Sprintf("No upcoming events found for '%s'", search), private, user)
+			return
 		}
 		events = ev.Items
 	}
 	event := events[0]
 	response = generateResponse(timeDiff(event), event)
 
-	return b.sendSingleMsg(private, response, nick)
+	b.sendMsg(response, private, user)
 }
 
-func (b *bot) replyNextEvent(private bool, nick string) error {
+func (b *bot) replyNextEvent(private bool, user dggchat.User) {
 	var response string
 	event, err := getNextEvent(b.cal, b.calList)
 	if err != nil {
 		log.Printf("error searching for event: %v", err)
-		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
+		return
 	}
 	if event == nil {
+		private = private || !b.canFailPublicly()
 		response = "No upcoming events found."
 	} else {
 		response = generateResponse(timeDiff(event), event)
 	}
-	return b.sendSingleMsg(private, response, nick)
+	b.sendMsg(response, private, user)
 }
 
-func (b *bot) sendSingleMsg(private bool, response string, nick string) error {
-	diff := time.Now().Sub(b.lastPublic)
-	if diff.Seconds() >= 5 && !private && response != "No upcoming events found." {
-		// TODO: need mutex here
-		b.lastEmoji++
-		if b.lastEmoji >= len(emojis) {
-			b.lastEmoji = 0
-		}
-		return b.sendMsg(fmt.Sprintf("%s %s", emojis[b.lastEmoji], response), false, "")
-	}
-	return b.sendMsg(fmt.Sprintf("%s", response), true, nick)
+func (b *bot) canFailPublicly() (response bool) {
+	response = time.Since(b.lastPublicFail).Seconds() > b.failTimeout.Seconds()
+	b.lastPublicFail = time.Now()
+	return
 }
 
-func (b *bot) replyMultiSearch(search string, nick string) error {
+func (b *bot) replyMultiSearch(search string, user dggchat.User) {
 	var responses []string
 	var i int
 	start := 0
-	split := strings.Split(search, " ")
+	split := strings.Fields(search)
 	for j, s := range split {
-		if s == "--multi" {
+		if s == "-multi" {
 			start = j
 			break
 		}
@@ -456,58 +365,65 @@ func (b *bot) replyMultiSearch(search string, nick string) error {
 	i, err := strconv.Atoi(split[start-1])
 	if err != nil {
 		if _, err := strconv.ParseFloat(split[start-1], 64); err == nil {
-			return b.sendMsg("WeirdChamp", true, nick)
+			b.sendMsg("WeirdChamp", true, user)
+			return
 		}
 		start--
 		i = 5
 	} else if i > 15 {
 		i = 15
 	} else if i < 0 {
-		return b.sendMsg("Don't be so negative haHAA", true, nick)
+		b.sendMsg("Don't be so negative haHAA", true, user)
+		return
 	} else if i == 0 {
-		return b.sendMsg("Nice one haHAA", true, nick)
+		b.sendMsg("Nice one haHAA", true, user)
+		return
 	}
 	search = strings.Join(split[start:], " ")
 
 	events, err := query(b.cal, b.calList, search, int64(i))
 	if err != nil {
 		log.Printf("error searching for event: %v", err)
-		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
+		return
 	}
 
 	if events == nil || len(events) == 0 {
-		return b.sendMsg("No upcoming events found.", true, nick)
+		b.sendMsg(fmt.Sprintf("No upcoming events found for '%s'", search), true, user)
+		return
 	}
 
 	for _, event := range events {
 		responses = append(responses, generateResponse(timeDiff(event), event))
 	}
-	return b.multiSendMsg(responses, nick)
+	b.multiSendMsg(responses, user)
 }
 
-func (b *bot) replyHelp(nick string) error {
+func (b *bot) replyHelp(user dggchat.User) {
 	responses := []string{
-		"`/msg whenis --help` to display this info",
+		"`/msg whenis -help` to display this info",
 		"`/msg whenis Formula 1` to search for an event (in this case F1)",
-		"`/msg whenis --multi 5 Formula 1` to search for the next 5 F1 events",
-		"`/msg whenis --next` to show the next scheduled event",
-		"`/msg whenis --ongoing` to show a list of all ongoing events",
-		"`/msg whenis --start 20 Session Title` adds a session to the calendar with a duration of 20 minutes and the title 'Session Title' (abusing this will get you blacklisted)",
-		"`/msg whenis --calendars` to get a list of active calendars",
+		"`/msg whenis -multi 5 Formula 1` to search for the next 5 F1 events",
+		"`/msg whenis -next` to show the next scheduled event",
+		"`/msg whenis -ongoing` to show a list of all ongoing events",
+		"`/msg whenis -start 20 Session Title` adds a session to the calendar with a duration of 20 minutes and the title 'Session Title' (abusing this will get you blacklisted)",
+		"`/msg whenis -calendars` to get a list of active calendars",
 		"All of these also work in public chat, but some will only reply with private messages",
 	}
-	return b.multiSendMsg(responses, nick)
+	b.multiSendMsg(responses, user)
 }
 
-func (b *bot) replyOngoingEvents(private bool, nick string) error {
+func (b *bot) replyOngoingEvents(private bool, user dggchat.User) {
 	var responses []string
 	events, err := getOngoingEvents(b.cal, b.calList)
 	if err != nil {
 		log.Printf("error searching for event: %v", err)
-		return b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, nick)
+		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
+		return
 	}
 	if events == nil || len(events) == 0 {
-		return b.sendMsg("No upcoming events found.", true, nick)
+		b.sendMsg("No ongoing events found.", true, user)
+		return
 	}
 	for _, event := range events {
 		if !regexp.MustCompile(`Week [0-9]{1,2} of [0-9]{4}`).Match([]byte(event.Summary)) {
@@ -516,14 +432,15 @@ func (b *bot) replyOngoingEvents(private bool, nick string) error {
 	}
 
 	if len(responses) == 1 {
-		return b.sendSingleMsg(private, responses[0], nick)
+		b.sendMsg(responses[0], private, user)
+		return
 	}
-	return b.multiSendMsg(responses, nick)
+	b.multiSendMsg(responses, user)
 }
 
-func (b *bot) retriveCalendar(err error) {
+func (b *bot) retrieveCalendar(err error) {
 	if err != nil {
-		log.Println(err)
+		log.Println("[ERROR]", err)
 	}
 	b.cal, err = getCalendar()
 	if err != nil {
@@ -531,14 +448,14 @@ func (b *bot) retriveCalendar(err error) {
 	}
 }
 
-func (b *bot) setEvent(input string, nick string) error {
+func (b *bot) setEvent(input string, user dggchat.User) {
 	duration := time.Minute * 120
 	var remainder string
 	split := strings.Split(input, " ")
 
-	if strings.ToLower(split[0]) != "--start" {
-		b.sendMsg("invalid syntax", true, nick)
-		return nil
+	if strings.ToLower(split[0]) != "-start" {
+		b.sendMsg("invalid syntax", true, user)
+		return
 	}
 
 	if i, err := strconv.Atoi(split[1]); err == nil {
@@ -553,27 +470,28 @@ func (b *bot) setEvent(input string, nick string) error {
 	}
 
 	if duration.Minutes() >= 2880 || duration.Minutes() <= 0 {
-		b.sendMsg("PepoBan", true, nick)
-		return nil
+		b.sendMsg("PepoBan", true, user)
+		return
 	}
 
-	err := b.insertSession(remainder, nick, duration)
+	err := b.insertSession(remainder, user.Nick, duration)
 	if err != nil {
-		return b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, nick)
+		b.sendMsg("Error insertion your session, please contact SoMuchForSubtlety", true, user)
+		return
 	}
-	return b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, nick)
+	b.sendMsg(fmt.Sprintf("Added '%v' with a duration of %v successfully.", remainder, fmtDuration(duration)), true, user)
 }
 
-func (b *bot) listCalendars(nick string, private bool) error {
+func (b *bot) listCalendars(user dggchat.User, private bool) {
 	var response string
-	for _, calendar := range b.calList.Items {
-		if !calendar.Primary {
-			if calendar.SummaryOverride != "" {
-				response += fmt.Sprintf(" `%s`", calendar.SummaryOverride)
+	for _, calendarListEntry := range b.calList.Items {
+		if !calendarListEntry.Primary {
+			if calendarListEntry.SummaryOverride != "" {
+				response += fmt.Sprintf(" `%s`", calendarListEntry.SummaryOverride)
 			} else {
-				response += fmt.Sprintf(" `%s`", calendar.Summary)
+				response += fmt.Sprintf(" `%s`", calendarListEntry.Summary)
 			}
 		}
 	}
-	return b.sendMsg(response, private, nick)
+	b.sendMsg(response, private, user)
 }

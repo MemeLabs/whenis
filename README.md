@@ -1,7 +1,7 @@
 ## running whenis
 
-You will need googleconfig.json, get it from here https://developers.google.com/calendar/quickstart/go
-when you first start whenis it will prompt ask you for authorizartion.
+You will need googleconfig.json, get it from here https://developers.google.com/calendar/quickstart/go  
+When you first start whenis it will prompt you to cennect a google calendar account.
 
 whenis will search all calendars from the connected account for events. Both even title and description are searched. If no events are found it will also search calendar titles.
 

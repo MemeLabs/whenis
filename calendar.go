@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -32,7 +32,9 @@ func getClient(config *oauth2.Config) *http.Client {
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
-		saveToken(tokFile, tok)
+		if err = saveToken(tokFile, tok); err != nil {
+			logrus.Fatal("failed to save token", err)
+		}
 	}
 	return config.Client(context.Background(), tok)
 }
@@ -45,12 +47,12 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 
 	var authCode string
 	if _, err := fmt.Scan(&authCode); err != nil {
-		log.Fatalf("Unable to read authorization code: %v", err)
+		logrus.Fatalf("Unable to read authorization code: %v", err)
 	}
 
 	tok, err := config.Exchange(context.TODO(), authCode)
 	if err != nil {
-		log.Fatalf("Unable to retrieve token from web: %v", err)
+		logrus.Fatalf("Unable to retrieve token from web: %v", err)
 	}
 	return tok
 }
@@ -68,18 +70,18 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 }
 
 // Saves a token to a file path.
-func saveToken(path string, token *oauth2.Token) {
+func saveToken(path string, token *oauth2.Token) error {
 	fmt.Printf("Saving credential file to: %s\n", path)
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		log.Fatalf("Unable to cache oauth token: %v", err)
+		return fmt.Errorf("Unable to open target file: %w", err)
 	}
 	defer f.Close()
-	json.NewEncoder(f).Encode(token)
+	return json.NewEncoder(f).Encode(token)
 }
 
 // maybe rundundant, could be replaced with searchString()
-//noinspection GoNilness
+// noinspection GoNilness
 func getNextEvent(srv *calendar.Service, list *calendar.CalendarList) (*calendar.Event, error) {
 	type eventStr struct {
 		ev []*calendar.Event
@@ -262,17 +264,17 @@ func (b *bot) insertSession(title string, nick string, timeOffset time.Duration)
 	if err != nil {
 		return err
 	}
-	log.Printf("Inserting session \"%v\" for [%v]", title, nick)
+	logrus.Infof("Inserting session \"%v\" for [%v]", title, nick)
 	_, err = b.cal.Events.Insert("primary", event).Do()
 	return err
 }
 
 func (b *bot) removeSession(nick string) error {
-	log.Printf("removing session \"%v\"", nick)
+	logrus.Infof("removing session \"%v\"", nick)
 	result, err := queryPrimary(b.cal, nick, 1)
 	if err != nil {
 		return err
-	} else if result == nil{
+	} else if result == nil {
 		return nil
 	}
 	return b.cal.Events.Delete("primary", result.Id).Do()

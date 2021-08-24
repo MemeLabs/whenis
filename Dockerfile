@@ -1,11 +1,14 @@
-FROM golang as builder
-ENV GO111MODULE=on
-WORKDIR /code
-ADD *.go go.mod go.sum /code/
-RUN CGO_ENABLED=0 go build -o /whenis .
+FROM golang:1.17 as builder
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY *.go .
+RUN CGO_ENABLED=0 go build -o whenis .
 
-FROM alpine:latest 
+FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-RUN apk add ca-certificates
-COPY --from=builder /whenis /whenis
+COPY --from=builder /workspace/whenis .
+USER 65532:65532
+
 ENTRYPOINT ["/whenis"]

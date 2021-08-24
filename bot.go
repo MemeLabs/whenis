@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -15,18 +13,19 @@ import (
 	"time"
 
 	"github.com/MemeLabs/dggchat"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/api/calendar/v3"
 )
 
 type bot struct {
-	failTimeout time.Duration
-	sgg         *dggchat.Session
-	lastCheck   time.Time
-	cal         *calendar.Service
-	calList     *calendar.CalendarList
-	emoteSwitch bool
-	lastPublicFail  time.Time
-	msgBuffer   chan msg
+	failTimeout    time.Duration
+	sgg            *dggchat.Session
+	lastCheck      time.Time
+	cal            *calendar.Service
+	calList        *calendar.CalendarList
+	emoteSwitch    bool
+	lastPublicFail time.Time
+	msgBuffer      chan msg
 }
 
 type msg struct {
@@ -46,28 +45,20 @@ var configFile string
 
 func main() {
 	flag.Parse()
-	logFile, err := os.OpenFile("log.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("error opening file: %v", err)
-	}
-	defer logFile.Close()
-
-	mw := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(mw)
 
 	config, err := readConfig()
 	if err != nil {
-		log.Fatal(err)
+		logrus.Fatal("failed to read config", err)
 	}
 
 	bot := newBot(config)
 
-	log.Println("[INFO] trying to establish connection...")
+	logrus.Info("trying to establish connection...")
 	err = bot.sgg.Open()
 	if err != nil {
-		log.Fatal("[FATAL]", err)
+		logrus.Fatal("failed to connect", err)
 	}
-	log.Println("[INFO] connected")
+	logrus.Info("connected")
 
 	bot.sgg.AddPMHandler(bot.onPM)
 	bot.sgg.AddMessageHandler(bot.onMessage)
@@ -78,7 +69,7 @@ func main() {
 		if msg.private {
 			err := bot.sgg.SendPrivateMessage(msg.recipient.Nick, msg.message)
 			if err != nil {
-				log.Printf("[ERROR] could not send private messate: %s", err)
+				logrus.Errorf("could not send private messate: %s", err)
 			}
 		} else {
 			emote := "PepoG"
@@ -88,7 +79,7 @@ func main() {
 			bot.emoteSwitch = !bot.emoteSwitch
 			err := bot.sgg.SendMessage(fmt.Sprintf("%s %s", emote, msg.message))
 			if err != nil {
-				log.Printf("[ERROR] could not send message: %s", err)
+				logrus.Errorf("could not send message: %s", err)
 			}
 		}
 		time.Sleep(time.Millisecond * 450)
@@ -106,9 +97,9 @@ func (b *bot) onMessage(m dggchat.Message, s *dggchat.Session) {
 	}
 }
 
-//noinspection GoUnusedParameter
+// noinspection GoUnusedParameter
 func onError(e string, session *dggchat.Session) {
-	log.Printf("[ERROR] %s", e)
+	logrus.Error("got error from chat", e)
 }
 
 func readConfig() (*config, error) {
@@ -124,8 +115,6 @@ func readConfig() (*config, error) {
 	}
 
 	var c *config
-	c = new(config)
-
 	err = json.Unmarshal(bv, &c)
 	if err != nil {
 		return nil, err
@@ -139,18 +128,18 @@ func newBot(config *config) *bot {
 	b.failTimeout = time.Second * 30
 	sgg, err := dggchat.New(";jwt=" + config.AuthToken)
 	if err != nil {
-		log.Fatalf("Unable to get connect to chat: %v", err)
+		logrus.Fatalf("Unable to get connect to chat: %v", err)
 	}
 	b.sgg = sgg
 	u, err := url.Parse(config.Address)
 	if err != nil {
-		log.Fatalf("[ERROR] can't parse url %v", err)
+		logrus.Fatalf("[ERROR] can't parse url %v", err)
 	}
 	b.sgg.SetURL(*u)
 	b.retrieveCalendar(nil)
 	b.calList, err = getCalendars(b.cal)
 	if err != nil {
-		log.Fatalf("Unable to get calendars: %v", err)
+		logrus.Fatalf("Unable to get calendars: %v", err)
 	}
 	b.msgBuffer = make(chan msg, 100)
 	return &b
@@ -160,7 +149,7 @@ func (b *bot) answer(message dggchat.Message, private bool) {
 	if time.Since(b.lastCheck).Minutes() > 5 {
 		cals, err := getCalendars(b.cal)
 		if err != nil {
-			log.Printf("Unable to get calendars: %v", err)
+			logrus.Errorf("Unable to get calendars: %v", err)
 		} else {
 			b.lastCheck = time.Now()
 			b.calList = cals
@@ -173,7 +162,7 @@ func (b *bot) answer(message dggchat.Message, private bool) {
 	}
 	searchText := strings.TrimSpace(strings.Replace(message.Message, "whenis", "", -1))
 	lowerText := strings.ToLower(searchText)
-	log.Printf("[INFO] received %s request from [%s]: %q", prvt, message.Sender.Nick, searchText)
+	logrus.Infof("received %s request from [%s]: %q", prvt, message.Sender.Nick, searchText)
 
 	if strings.Contains(lowerText, "-next") || searchText == "" {
 		b.replyNextEvent(private, message.Sender)
@@ -198,7 +187,7 @@ func (b *bot) answer(message dggchat.Message, private bool) {
 }
 
 func timeDiff(e *calendar.Event) time.Duration {
-	return eventStartTime(e).Sub(time.Now())
+	return time.Until(eventStartTime(e))
 }
 
 func eventStartTime(e *calendar.Event) time.Time {
@@ -284,12 +273,10 @@ func init() {
 func (b *bot) multiSendMsg(messages []string, user dggchat.User) {
 	for _, message := range messages {
 		b.sendMsg(message, true, user)
-
 	}
 }
 
 func (b *bot) sendMsg(message string, private bool, user dggchat.User) {
-
 	var m msg
 	m.private = private
 	m.recipient = user
@@ -302,7 +289,7 @@ func (b *bot) replySingleSearch(search string, private bool, user dggchat.User) 
 	var response string
 	events, err := query(b.cal, b.calList, search, 1)
 	if err != nil {
-		log.Printf("error searching for event: %v", err)
+		logrus.Errorf("error searching for event: %v", err)
 		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
 		return
 	}
@@ -310,7 +297,7 @@ func (b *bot) replySingleSearch(search string, private bool, user dggchat.User) 
 	if len(events) == 0 {
 		ev, err := queryCalTitles(b.cal, b.calList, search, 1)
 		if err != nil {
-			log.Printf("error searching for event: %v", err)
+			logrus.Errorf("error searching for event: %v", err)
 			b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
 			return
 		}
@@ -331,7 +318,7 @@ func (b *bot) replyNextEvent(private bool, user dggchat.User) {
 	var response string
 	event, err := getNextEvent(b.cal, b.calList)
 	if err != nil {
-		log.Printf("error searching for event: %v", err)
+		logrus.Errorf("error searching for event: %v", err)
 		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
 		return
 	}
@@ -383,12 +370,12 @@ func (b *bot) replyMultiSearch(search string, user dggchat.User) {
 
 	events, err := query(b.cal, b.calList, search, int64(i))
 	if err != nil {
-		log.Printf("error searching for event: %v", err)
+		logrus.Errorf("error searching for event: %v", err)
 		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
 		return
 	}
 
-	if events == nil || len(events) == 0 {
+	if len(events) == 0 {
 		b.sendMsg(fmt.Sprintf("No upcoming events found for '%s'", search), true, user)
 		return
 	}
@@ -417,11 +404,11 @@ func (b *bot) replyOngoingEvents(private bool, user dggchat.User) {
 	var responses []string
 	events, err := getOngoingEvents(b.cal, b.calList)
 	if err != nil {
-		log.Printf("error searching for event: %v", err)
+		logrus.Errorf("error searching for event: %v", err)
 		b.sendMsg("There was an error searching for your query. If this persists please contact SoMuchForSubtlety", true, user)
 		return
 	}
-	if events == nil || len(events) == 0 {
+	if len(events) == 0 {
 		b.sendMsg("No ongoing events found.", true, user)
 		return
 	}
@@ -438,13 +425,11 @@ func (b *bot) replyOngoingEvents(private bool, user dggchat.User) {
 	b.multiSendMsg(responses, user)
 }
 
-func (b *bot) retrieveCalendar(err error) {
-	if err != nil {
-		log.Println("[ERROR]", err)
-	}
+func (b *bot) retrieveCalendar(error) {
+	var err error
 	b.cal, err = getCalendar()
 	if err != nil {
-		log.Fatalf("Unable to get calendar: %v", err)
+		logrus.Errorf("Unable to get calendar: %v", err)
 	}
 }
 

@@ -13,12 +13,30 @@ import (
 )
 
 type Chat struct {
-	conn        *websocket.Conn
+	conn *websocket.Conn
+
 	MessageChan chan Message
 }
 
 type outboundMsg struct {
-	Data string `json:"data"`
+	Data string  `json:"data"`
+	Nick Chatter `json:"nick"`
+}
+
+func (c *Chat) SendPriv(recipient Chatter, message string) error {
+	msg := outboundMsg{Data: message, Nick: recipient}
+
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+	msgBytes = append([]byte("PRIVMSG "), msgBytes...)
+	err = c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	return nil
 }
 
 func (c *Chat) Send(message string) error {
@@ -107,7 +125,9 @@ func (c *Chat) readLoop(ctx context.Context) error {
 				logrus.Error("got error from chat: ", string(parts[1]))
 			case "MSG":
 				// this will leak goroutines if noone is listening
-				go c.handleMsg(jsonBytes)
+				go c.handleMsg(jsonBytes, false)
+			case "PRIVMSG":
+				go c.handleMsg(jsonBytes, true)
 			default:
 				// don't care
 			}
@@ -115,7 +135,7 @@ func (c *Chat) readLoop(ctx context.Context) error {
 	}
 }
 
-func (c *Chat) handleMsg(msgBytes []byte) {
+func (c *Chat) handleMsg(msgBytes []byte, priv bool) {
 	var msg Message
 	err := json.Unmarshal(msgBytes, &msg)
 	if err != nil {
@@ -123,6 +143,7 @@ func (c *Chat) handleMsg(msgBytes []byte) {
 		return
 	}
 	msg.Raw = msgBytes
+	msg.Private = priv
 
 	c.MessageChan <- msg
 }

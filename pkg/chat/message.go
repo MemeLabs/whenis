@@ -11,9 +11,13 @@ const (
 	FeatureMod UserFeature = "moderator"
 )
 
+type Chatter string
+
 type Message struct {
-	Raw       []byte        `json:"-"`
-	Sender    string        `json:"nick"`
+	Raw     []byte `json:"-"`
+	Private bool   `json:"-"`
+
+	Sender    Chatter       `json:"nick"`
 	Features  []UserFeature `json:"features"`
 	Timestamp int64         `json:"timestamp"`
 	Data      string        `json:"data"`
@@ -37,9 +41,9 @@ func (m Message) Mod() bool {
 }
 
 // Addresses returns true if it the message mentions the provided nick
-func (m Message) Mentions(nick string) bool {
+func (m Message) Mentions(nick Chatter) bool {
 	for _, n := range m.Entities.Nicks {
-		if strings.EqualFold(n.Nick, nick) {
+		if strings.EqualFold(n.Nick, string(nick)) {
 			return true
 		}
 	}
@@ -47,14 +51,14 @@ func (m Message) Mentions(nick string) bool {
 	return false
 }
 
-func (m Message) WithoutNick(nick string) string {
+func (m Message) WithoutNick(nick Chatter) string {
 	nicks := m.Entities.Nicks
 	// sort descending so we can remove occurrences from right to left
 	sort.Slice(nicks, func(i, j int) bool { return nicks[i].Bounds[0] > nicks[j].Bounds[0] })
 
 	patchedMsg := m.Data
 	for _, n := range nicks {
-		if strings.EqualFold(n.Nick, nick) {
+		if strings.EqualFold(n.Nick, string(nick)) {
 			patchedMsg = patchedMsg[:n.Bounds[0]] + patchedMsg[n.Bounds[1]:]
 		}
 	}

@@ -19,6 +19,7 @@ type Bot struct {
 	cal  *calendar.Calendar
 	chat *chat.Chat
 
+	lastIDK time.Time
 	lastMsg string
 	emote   bool
 
@@ -227,12 +228,17 @@ func (bot *Bot) simpleQuery(msg chat.Message) {
 	}
 
 	if event == nil {
-		if bot.emote {
-			bot.Send("idk SHRUG")
+		if bot.lastIDK.Add(time.Minute).After(time.Now()) {
+			bot.SendPriv(msg.Sender, "idk SHRUG")
 		} else {
-			bot.Send("idk TANTIES")
+			if bot.emote {
+				bot.Send("idk SHRUG")
+			} else {
+				bot.Send("idk TANTIES")
+			}
+			bot.emote = !bot.emote
+			bot.lastIDK = time.Now() // TODO: locking
 		}
-		bot.emote = !bot.emote
 		return
 	}
 

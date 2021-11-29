@@ -122,10 +122,13 @@ func (bot *Bot) continueAddingEvent(msg chat.Message) {
 
 	if e.title == "" {
 		e.title = msg.Data
-		if e.title != "" {
-			bot.SendPriv(msg.Sender, "what search keywords should the event have?")
-		} else {
+		if badpfx := strings.HasPrefix(e.title, "!"); e.title == "" || badpfx {
 			bot.SendPriv(msg.Sender, "invalid title, please try again")
+			if badpfx {
+				bot.SendPriv(msg.Sender, "titles must not begin with '!'")
+			}
+		} else {
+			bot.SendPriv(msg.Sender, "what search keywords should the event have?")
 		}
 		return
 	}

@@ -1,0 +1,13 @@
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImagePolicy
+metadata:
+  name: whenis
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: whenis
+  policy:
+    semver:
+      range: '*'
+

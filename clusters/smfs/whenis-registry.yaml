@@ -1,0 +1,10 @@
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImageRepository
+metadata:
+  name: whenis
+  namespace: flux-system
+spec:
+  image: ghcr.io/memelabs/whenis-bot
+  interval: 5m0s
+

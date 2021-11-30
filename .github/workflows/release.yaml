@@ -1,0 +1,40 @@
+name: Build and Push Image
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY_USER: ${{ github.actor }}
+  REGISTRY_PASSWORD: ${{ github.token }}
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install qemu dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+      - name: Build Image
+        id: build_image_multiarch
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: whenis-bot
+          tags: latest
+          archs: amd64, arm64
+          oci: true
+          containerfiles: ./Dockerfile
+      - name: Push To GHCR
+        id: push
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build_image_multiarch.outputs.image }}
+          tags: ${{ steps.build_image_multiarch.outputs.tags }}
+          registry: ghcr.io/memelabs
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+      - run: echo "Image pushed to ${{ steps.push.outputs.registry-paths }}"

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whenis
+  namespace: whenis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whenis
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: whenis
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: whenis
+          env:
+            - name: STRIMS_JWT
+              valueFrom:
+                secretKeyRef:
+                  name: whenis-creds
+                  key: strims-jwt
+            - name: CAL_REFRESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: whenis-creds
+                  key: cal-refresh-token
+          image: ghcr.io/memelabs/whenis-bot
+          imagePullPolicy: IfNotPresent
+          args: ["-config=/etc/whenis/config.json"]
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/whenis/
+      volumes:
+        - name: config-volume
+          configMap:
+            name: whenis-config
